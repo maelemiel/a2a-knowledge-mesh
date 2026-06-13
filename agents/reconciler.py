@@ -64,15 +64,30 @@ def _create_band_room(title: str, content: str, mention_ids: list[str]) -> str |
 
 def handle(card, text):
     if text.startswith("detect-conflict"):
-        # Fetch facts from Keeper
+        # Fetch facts from Keeper and load into our DB for analysis
         try:
             resp = _a2a_request(KEEPER_URL, "recall all")
             keeper_msg = resp.get("result", {}).get("task", {}).get("message", {}).get("parts", [{}])[0].get("text", "")
         except Exception as e:
             return f"Error contacting Keeper: {e}"
 
-        # Parse facts from Keeper response
-        # If Keeper has data, load it into our DB for conflict detection
+        # Parse Keeper response and populate our DB
+        # Keeper format: "[store] key = value" per line
+        conn.execute("DELETE FROM facts")  # fresh sync
+        for line in keeper_msg.split("\n"):
+            line = line.strip()
+            if not line or line.startswith("Facts:") or line.startswith("No") or line.startswith("Matches"):
+                continue
+            # Format: [store] key = value (source: X)
+            if line.startswith("[") and "] " in line:
+                store = line[1:line.index("] ")]
+                rest = line[line.index("] ") + 2:]
+                if " = " in rest:
+                    key, rest = rest.split(" = ", 1)
+                    value = rest.split(" (source:")[0].strip() if "(source:" in rest else rest.strip()
+                    upsert(conn, store, key.strip(), value, "keeper-sync")
+        conn.commit()
+
         conflicts = detect_conflicts(conn)
 
         if not conflicts:

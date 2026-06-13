@@ -19,15 +19,16 @@ conn = init_db(DB_PATH)
 def handle(card, text):
     if text.startswith("store-fact"):
         parts = text[len("store-fact"):].strip().split()
-        key, value, source = "", "", "manual"
+        key, value, source, store = "", "", "manual", "live"
         for p in parts:
             if p.startswith("key="): key = p[4:]
             elif p.startswith("value="): value = p[6:]
             elif p.startswith("source="): source = p[7:]
+            elif p.startswith("store="): store = p[6:]
         if key and value:
-            upsert(conn, "live", key, value, source)
-            return f"Stored: {key} = {value} (source: {source})"
-        return "Usage: store-fact key=X value=Y source=Z"
+            upsert(conn, store, key, value, source)
+            return f"Stored: {key} = {value} (store: {store}, source: {source})"
+        return "Usage: store-fact key=X value=Y [source=Z] [store=NAME]"
 
     elif text.startswith("recall"):
         query = text[len("recall"):].strip().replace("key=", "").strip()
