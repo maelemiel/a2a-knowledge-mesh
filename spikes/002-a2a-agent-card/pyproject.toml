@@ -1,0 +1,9 @@
+[project]
+name = "002-a2a-agent-card"
+version = "0.1.0"
+description = "Add your description here"
+requires-python = ">=3.11"
+dependencies = [
+    "a2a>=0.44",
+    "a2a-python>=0.0.1",
+]

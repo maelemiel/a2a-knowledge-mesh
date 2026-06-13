@@ -1,0 +1,9 @@
+[project]
+name = "hackathon-band-of-agents"
+version = "0.1.0"
+description = "Add your description here"
+requires-python = ">=3.11"
+dependencies = [
+    "band-sdk[pydantic-ai]>=1.0.0",
+    "httpx>=0.28.1",
+]
