@@ -1,38 +1,83 @@
-#!/usr/bin/env python3
-"""Run all 3 A2A agents concurrently."""
+"""Runner — launch all 3 agents or a single one."""
 
-import sys, os, threading, signal
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from __future__ import annotations
 
-from lib.a2a_server import run_server
-from agents.registry import SKILLS as REG_SKILLS, handle as handle_registry
-from agents.keeper import SKILLS as KEEP_SKILLS, handle as handle_keeper
-from agents.reconciler import SKILLS as REC_SKILLS, handle as handle_reconciler
-
-REG_PORT = int(os.environ.get("REGISTRY_PORT", 8765))
-KEEP_PORT = int(os.environ.get("KEEPER_PORT", 8766))
-REC_PORT = int(os.environ.get("RECONCILER_PORT", 8767))
+import argparse
+import os
+import signal
+import subprocess
+import sys
+from pathlib import Path
 
 
-def run_all():
-    """Start all 3 agents in daemon threads and block."""
-    threads = [
-        threading.Thread(target=run_server, args=("Registry", "A2A agent directory", "1.0.0", REG_PORT, REG_SKILLS, handle_registry), daemon=True),
-        threading.Thread(target=run_server, args=("Keeper", "A2A fact storage", "1.0.0", KEEP_PORT, KEEP_SKILLS, handle_keeper), daemon=True),
-        threading.Thread(target=run_server, args=("Reconciler", "A2A conflict resolver", "1.0.0", REC_PORT, REC_SKILLS, handle_reconciler), daemon=True),
-    ]
-    for t in threads:
-        t.start()
+def run_single(agent_name: str) -> None:
+    if agent_name == "registry":
+        from agents.registry import RegistryAgent
+        RegistryAgent().run()
+    elif agent_name == "keeper":
+        from agents.keeper import KeeperAgent
+        KeeperAgent().run()
+    elif agent_name == "reconciler":
+        from agents.reconciler import ReconcilerAgent
+        band_id = os.getenv("BAND_AGENT_ID")
+        band_key = os.getenv("BAND_API_KEY")
+        ReconcilerAgent(band_agent_id=band_id, band_api_key=band_key).run()
+    else:
+        print(f"unknown agent: {agent_name}", file=sys.stderr)
+        sys.exit(1)
+
+
+def run_all() -> None:
+    """Launch 3 agents as subprocesses in the same terminal group."""
+    root = Path(__file__).parent.parent
+    procs: list[subprocess.Popen] = []
+
+    def cleanup(_sig=None, _frame=None) -> None:
+        for p in procs:
+            p.terminate()
+        for p in procs:
+            try:
+                p.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                p.kill()
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, cleanup)
+    signal.signal(signal.SIGTERM, cleanup)
+
+    for name in ["registry", "keeper", "reconciler"]:
+        p = subprocess.Popen(
+            [sys.executable, "-m", f"agents.{name}"],
+            cwd=root,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+        procs.append(p)
+        print(f"[{name}] started (pid={p.pid})")
+
+    try:
+        for p in procs:
+            for line in p.stdout:  # type: ignore
+                sys.stdout.buffer.write(line)
+                sys.stdout.buffer.flush()
+    except KeyboardInterrupt:
+        cleanup()
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="A2A Knowledge Mesh runner")
+    parser.add_argument(
+        "--agent", "-a",
+        choices=["registry", "keeper", "reconciler"],
+        help="Run a single agent (default: all 3)",
+    )
+    args = parser.parse_args()
+
+    if args.agent:
+        run_single(args.agent)
+    else:
+        run_all()
 
 
 if __name__ == "__main__":
-    print("=== A2A Knowledge Mesh ===")
-    print(f"Registry:   http://localhost:{REG_PORT}/a2a")
-    print(f"Keeper:     http://localhost:{KEEP_PORT}/a2a")
-    print(f"Reconciler: http://localhost:{REC_PORT}/a2a")
-    print("Press Ctrl+C to stop\n")
-    run_all()
-    signal.signal(signal.SIGINT, lambda s, f: sys.exit(0))
-    for t in threading.enumerate():
-        if t is not threading.main_thread():
-            t.join()
+    main()

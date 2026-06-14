@@ -1,9 +1,19 @@
 [project]
-name = "hackathon-band-of-agents"
+name = "a2a-knowledge-mesh"
 version = "0.1.0"
-description = "Add your description here"
+description = "3 A2A agents that discover, store, and reconcile knowledge via Band"
+readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "band-sdk[pydantic-ai]>=1.0.0",
-    "httpx>=0.28.1",
+    "uvicorn>=0.34",
+    "starlette>=0.46",
+    "band-sdk>=1.0.0",
+    "httpx>=0.28",
 ]
+
+[project.scripts]
+mesh = "agents.runner:main"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

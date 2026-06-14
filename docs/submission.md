@@ -21,3 +21,24 @@ This turns fragmented knowledge into a living, negotiated truth. The demo shows 
 Built with Python, A2A Protocol, Band REST API, and SQLite. Uses AI/ML API credits and Featherless AI (BOA26) for LLM-powered resolution suggestions.
 
 Track: Internal Enterprise Workflows / Regulated & High-Stakes.
+
+## Demo Video Script (60s)
+
+```
+[0-10s] Terminal: Run `python test_integration.py` — 3 agents start
+[10-20s] Registry Agent: Register keeper, discover by skill
+[20-35s] Keeper Agent: Store 2 conflicting facts from different sources
+[35-50s] Reconciler Agent: Detect conflict, create Band room, post details
+[50-60s] Resolve: Pick winning fact, show conflict closed
+```
+
+## Setup (for judges)
+
+```bash
+git clone https://github.com/maelemiel/a2a-knowledge-mesh.git
+cd a2a-knowledge-mesh
+uv sync
+uv run agents/runner.py          # start all 3 agents
+# in another terminal:
+uv run test_integration.py        # run the demo flow
+```
