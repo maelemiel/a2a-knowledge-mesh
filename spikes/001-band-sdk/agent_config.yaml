@@ -1,3 +1,4 @@
 registry_agent:
-  agent_id: "688b3497-c189-4f6e-9d65-db328e530c11"
-  api_key: "band_a_1781370641_sXRq9-qvIa7EOlnMZsi_b-WbUAu_dSO4"
+  # Set BAND_AGENT_ID + BAND_API_KEY in .env or env
+  agent_id: "${BAND_AGENT_ID}"
+  api_key: "${BAND_API_KEY}"
