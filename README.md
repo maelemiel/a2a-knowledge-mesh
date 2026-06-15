@@ -38,7 +38,14 @@ uv run python -m agents.runner
 In another terminal, test the full flow:
 
 ```bash
-uv run test_integration.py
+# Clean + run demo (7 steps)
+uv run python test_integration.py
+
+# Or use the CLI
+uv run python mesh.py status
+uv run python mesh.py store subject=project-ALLY predicate=framework object=Next.js source=docs-repo
+uv run python mesh.py recall project-ALLY
+uv run python mesh.py detect
 ```
 
 Expected output: 7 steps — register keeper → discover by skill → store facts → recall → detect conflict → resolve → status.

@@ -1,14 +1,16 @@
 """End-to-end integration test — demonstrates full A2A Knowledge Mesh flow."""
 
 from __future__ import annotations
-
-import json
+import shutil
 import subprocess
 import sys
 import time
 from pathlib import Path
 
 import httpx
+
+ROOT = Path(__file__).parent
+DATA_DIR = ROOT / "data"
 
 
 AGENTS = {
@@ -167,6 +169,10 @@ def test_flow() -> int:
 def main() -> None:
     print("A2A Knowledge Mesh — Integration Test")
     print("─" * 40)
+
+    # Clean previous run data BEFORE starting agents
+    if DATA_DIR.exists():
+        shutil.rmtree(DATA_DIR)
 
     try:
         start_agents()

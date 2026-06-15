@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import time
 from pathlib import Path
@@ -56,9 +57,6 @@ class RegistryStore:
             {"id": r[0], "name": r[1], "card_url": r[2], "skills": json.loads(r[3]), "url": r[4]}
             for r in rows
         ]
-
-
-import json  # noqa: E402 (needed after store class)
 
 
 class RegistryAgent(Agent):

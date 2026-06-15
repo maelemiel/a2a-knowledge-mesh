@@ -197,32 +197,34 @@ BAND_API_KEY=your-band-api-key
 a2a-knowledge-mesh/
 ├── agents/
 │   ├── __init__.py
-│   ├── base.py              # base Agent class (A2A handler, card, health)
-│   ├── registry.py           # Registry agent logic
-│   ├── keeper.py             # Keeper agent logic
-│   └── reconciler.py         # Reconciler agent logic
+│   ├── base.py              # Base Agent class (Starlette, A2A handler, card, health)
+│   ├── registry.py           # Registry agent + RegistryStore (SQLite)
+│   ├── keeper.py             # Keeper agent + KeeperStore (SQLite)
+│   └── reconciler.py         # Reconciler agent + ReconcilerStore + BandClient
+│   └── runner.py             # CLI: start all 3 or single agent
 ├── protocols/
 │   ├── __init__.py
-│   └── a2a.py                # A2A message types, helpers
+│   └── a2a.py                # A2A dataclasses: AgentCard, A2ARequest, A2AResponse
 ├── band/
-│   ├── __init__.py
-│   └── client.py             # Band REST API client
-├── db/
-│   ├── __init__.py
-│   ├── registry_store.py     # Registry DB operations
-│   ├── keeper_store.py       # Keeper DB operations
-│   └── reconciler_store.py   # Reconciler DB operations
-├── runner.py                 # Start all 3 agents (or single with --agent)
-├── test_integration.py       # End-to-end demo script
+│   └── __init__.py           # (reserved for future Band SDK extraction)
+├── lib/
+│   └── band_client.py        # Standalone Band REST client (alternative impl)
+├── mesh.py                   # Unified CLI (store, recall, discover, detect, status)
+├── main.py                   # Entry stub
+├── test_integration.py       # End-to-end demo script (7 steps)
 ├── spikes/                   # Feasibility spikes
 ├── docs/
-│   └── submission.md         # Hackathon submission text
+│   ├── submission.md         # Hackathon submission text
+│   ├── slides.md             # Slide deck
+│   └── video_script.md       # Demo video script
 ├── .env.example
 ├── pyproject.toml
 ├── ARCHITECTURE.md           # This file
-├── DESIGN.md                 # Protocol specs, card schemas
+├── DESIGN.md                 # Protocol specs, card schemas, data contracts
 └── README.md
 ```
+
+> **Note:** Store classes (RegistryStore, KeeperStore, ReconcilerStore) are defined in the same module as their agent. No separate `db/` store files. BandClient is also inlined in `reconciler.py`. The `lib/band_client.py` is a standalone alternative.
 
 ## Non-Goals
 

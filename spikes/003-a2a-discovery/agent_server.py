@@ -1,5 +1,6 @@
 """A2A agent server — configurable by name/port/skills."""
-import json, sys
+import json
+import sys
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 def make_agent_card(name, desc, version, port, skills, extra_caps=None):

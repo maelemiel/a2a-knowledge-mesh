@@ -1,7 +1,9 @@
 """A2A Discovery spike test.
 Starts Registry + Keeper agents, discovers capabilities, routes tasks."""
 
-import json, sys, os, time, threading
+import json
+import time
+import threading
 from agent_server import run_agent
 
 from http.client import HTTPConnection

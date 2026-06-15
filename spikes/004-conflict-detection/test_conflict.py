@@ -1,7 +1,8 @@
 """Spike 004: Conflict Detection.
 Tests if Reconciler can detect contradictions between two fact stores."""
 
-import sqlite3, json, os
+import sqlite3
+import os
 
 FACTS_DB = "/tmp/spike004_facts.db"
 

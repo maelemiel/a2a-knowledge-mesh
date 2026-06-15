@@ -1,7 +1,8 @@
 """Spike 005: Band Resolution.
 Reconciler creates a Band room, @mentions agents, posts resolution."""
 
-import asyncio, json, logging, os, sys
+import asyncio
+import logging
 import httpx
 from dotenv import load_dotenv
 from band.config import load_agent_config
