@@ -46,18 +46,12 @@ class KeeperStore:
             )
         """)
         # Indexes for fast lookups and conflict detection
-        self.conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_facts_subject ON facts(subject)"
-        )
-        self.conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_facts_source ON facts(source_id)"
-        )
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_facts_subject ON facts(subject)")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_facts_source ON facts(source_id)")
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_facts_spo ON facts(subject, predicate, object)"
         )
-        self.conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_facts_sp ON facts(subject, predicate)"
-        )
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_facts_sp ON facts(subject, predicate)")
         self.conn.commit()
         logger.info("KeeperStore ready at %s", db_path)
 
@@ -70,7 +64,7 @@ class KeeperStore:
         subject: str,
         predicate: str,
         object: str,
-        source_id: str,
+        source_id: str = "band",
         source_url: str | None = None,
     ) -> dict:
         ts = int(time.time())
@@ -81,24 +75,45 @@ class KeeperStore:
             (subject, predicate, object, source_id, source_url, ts, subject, predicate, source_id),
         )
         self.conn.commit()
-        return {"id": cur.lastrowid, "subject": subject, "predicate": predicate, "object": object}
+        return {
+            "id": cur.lastrowid,
+            "subject": subject,
+            "predicate": predicate,
+            "object": object,
+            "source_id": source_id,
+        }
 
     def store_batch(self, facts: list[dict]) -> list[dict]:
         """Bulk insert multiple facts in a single transaction."""
         ts = int(time.time())
         ids: list[dict] = []
         for f in facts:
+            source = f.get("source_id", "band")
             cur = self.conn.execute(
                 "INSERT INTO facts (subject, predicate, object, source_id, source_url, timestamp, version) "
                 "VALUES (?, ?, ?, ?, ?, ?, "
                 "COALESCE((SELECT MAX(version) + 1 FROM facts WHERE subject=? AND predicate=? AND source_id=?), 1))",
                 (
-                    f["subject"], f["predicate"], f["object"],
-                    f.get("source_id", "default"), f.get("source_url"),
-                    ts, f["subject"], f["predicate"], f.get("source_id", "default"),
+                    f["subject"],
+                    f["predicate"],
+                    f["object"],
+                    source,
+                    f.get("source_url"),
+                    ts,
+                    f["subject"],
+                    f["predicate"],
+                    source,
                 ),
             )
-            ids.append({"id": cur.lastrowid, "subject": f["subject"], "predicate": f["predicate"], "object": f["object"]})
+            ids.append(
+                {
+                    "id": cur.lastrowid,
+                    "subject": f["subject"],
+                    "predicate": f["predicate"],
+                    "object": f["object"],
+                    "source_id": source,
+                }
+            )
         self.conn.commit()
         logger.info("Stored %d facts in batch", len(ids))
         return ids
@@ -107,7 +122,12 @@ class KeeperStore:
     # Read
     # ------------------------------------------------------------------
 
-    def recall(self, subject: str | None = None, source_id: str | None = None) -> list[dict]:
+    def recall(
+        self,
+        subject: str | None = None,
+        source_id: str | None = None,
+        limit: int | None = None,
+    ) -> list[dict]:
         query = "SELECT id, subject, predicate, object, source_id, source_url, timestamp, version FROM facts WHERE 1=1"
         params: list[Any] = []
         if subject:
@@ -117,11 +137,20 @@ class KeeperStore:
             query += " AND source_id = ?"
             params.append(source_id)
         query += " ORDER BY timestamp DESC"
+        if limit is not None:
+            query += " LIMIT ?"
+            params.append(limit)
         rows = self.conn.execute(query, params).fetchall()
         return [
             {
-                "id": r[0], "subject": r[1], "predicate": r[2], "object": r[3],
-                "source_id": r[4], "source_url": r[5], "timestamp": r[6], "version": r[7],
+                "id": r[0],
+                "subject": r[1],
+                "predicate": r[2],
+                "object": r[3],
+                "source_id": r[4],
+                "source_url": r[5],
+                "timestamp": r[6],
+                "version": r[7],
             }
             for r in rows
         ]
@@ -134,8 +163,14 @@ class KeeperStore:
         ).fetchall()
         return [
             {
-                "id": r[0], "subject": r[1], "predicate": r[2], "object": r[3],
-                "source_id": r[4], "source_url": r[5], "timestamp": r[6], "version": r[7],
+                "id": r[0],
+                "subject": r[1],
+                "predicate": r[2],
+                "object": r[3],
+                "source_id": r[4],
+                "source_url": r[5],
+                "timestamp": r[6],
+                "version": r[7],
             }
             for r in rows
         ]
@@ -149,9 +184,18 @@ class KeeperStore:
         if row is None:
             return None
         return {
-            "id": row[0], "subject": row[1], "predicate": row[2], "object": row[3],
-            "source_id": row[4], "source_url": row[5], "timestamp": row[6], "version": row[7],
+            "id": row[0],
+            "subject": row[1],
+            "predicate": row[2],
+            "object": row[3],
+            "source_id": row[4],
+            "source_url": row[5],
+            "timestamp": row[6],
+            "version": row[7],
         }
+
+    def get_fact(self, fact_id: int) -> dict | None:
+        return self.get_by_id(fact_id)
 
     # ------------------------------------------------------------------
     # Conflict detection — SQL JOIN (O(n log n), not O(n²))
@@ -233,6 +277,7 @@ class KeeperAgent(Agent):
 
         if method == "store-facts-batch":
             from agents.validation import StoreFactsBatchParams
+
             p = StoreFactsBatchParams(**params)
             return {"facts": self.store.store_batch([f.model_dump() for f in p.facts])}
 

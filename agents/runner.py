@@ -14,12 +14,15 @@ from pathlib import Path
 def run_single(agent_name: str) -> None:
     if agent_name == "registry":
         from agents.registry import RegistryAgent
+
         RegistryAgent().run()
     elif agent_name == "keeper":
         from agents.keeper import KeeperAgent
+
         KeeperAgent().run()
     elif agent_name == "reconciler":
         from agents.reconciler import ReconcilerAgent
+
         band_id = os.getenv("BAND_AGENT_ID")
         band_key = os.getenv("BAND_API_KEY")
         ReconcilerAgent(band_agent_id=band_id, band_api_key=band_key).run()
@@ -89,7 +92,8 @@ def run_all() -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="A2A Knowledge Mesh runner")
     parser.add_argument(
-        "--agent", "-a",
+        "--agent",
+        "-a",
         choices=["registry", "keeper", "reconciler"],
         help="Run a single agent (default: all 3)",
     )

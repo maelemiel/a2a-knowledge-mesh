@@ -41,17 +41,16 @@ class RegistryStore:
             CREATE TABLE IF NOT EXISTS agents (
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
-                card_url TEXT NOT NULL,
+                card_url TEXT,
                 skills TEXT NOT NULL,   -- JSON array
-                url TEXT NOT NULL,
+                url TEXT,
                 last_seen INTEGER NOT NULL,
-                role TEXT NOT NULL DEFAULT 'agent'
+                role TEXT NOT NULL DEFAULT 'agent',
+                description TEXT
             )
         """)
         # Composite index for LIKE-based skill search
-        self.conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_agents_skills ON agents(skills)"
-        )
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_agents_skills ON agents(skills)")
         self.conn.commit()
         logger.info("RegistryStore ready at %s", db_path)
 
@@ -59,18 +58,21 @@ class RegistryStore:
         self,
         agent_id: str,
         name: str,
-        card_url: str,
         skills: list[str],
-        url: str,
+        card_url: str | None = None,
+        url: str | None = None,
         role: str = "agent",
-    ) -> None:
+        description: str | None = None,
+    ) -> dict:
+        ts = int(time.time())
         self.conn.execute(
-            "INSERT OR REPLACE INTO agents (id, name, card_url, skills, url, last_seen, role) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (agent_id, name, card_url, json.dumps(skills), url, int(time.time()), role),
+            "INSERT OR REPLACE INTO agents (id, name, card_url, skills, url, last_seen, role, description) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (agent_id, name, card_url, json.dumps(skills), url, ts, role, description),
         )
         self.conn.commit()
         logger.info("Agent %r (role=%r) registered at %s", agent_id, role, url)
+        return {"agent_id": agent_id, "status": "registered"}
 
     def unregister(self, agent_id: str) -> bool:
         cur = self.conn.execute("DELETE FROM agents WHERE id=?", (agent_id,))
@@ -86,38 +88,57 @@ class RegistryStore:
         if not skill:
             return self.list_all()
         rows = self.conn.execute(
-            "SELECT id, name, card_url, skills, url, role FROM agents WHERE skills LIKE ?",
+            "SELECT id, name, card_url, skills, url, role, description FROM agents WHERE skills LIKE ?",
             (f"%{skill}%",),
         ).fetchall()
         return [
             {
-                "id": r[0], "name": r[1], "card_url": r[2],
-                "skills": json.loads(r[3]), "url": r[4], "role": r[5],
+                "id": r[0],
+                "agent_id": r[0],
+                "name": r[1],
+                "card_url": r[2],
+                "skills": json.loads(r[3]),
+                "url": r[4],
+                "role": r[5],
+                "description": r[6],
             }
             for r in rows
         ]
 
     def list_all(self) -> list[dict]:
         rows = self.conn.execute(
-            "SELECT id, name, card_url, skills, url, role FROM agents ORDER BY last_seen DESC"
+            "SELECT id, name, card_url, skills, url, role, description FROM agents ORDER BY last_seen DESC"
         ).fetchall()
         return [
             {
-                "id": r[0], "name": r[1], "card_url": r[2],
-                "skills": json.loads(r[3]), "url": r[4], "role": r[5],
+                "id": r[0],
+                "agent_id": r[0],
+                "name": r[1],
+                "card_url": r[2],
+                "skills": json.loads(r[3]),
+                "url": r[4],
+                "role": r[5],
+                "description": r[6],
             }
             for r in rows
         ]
 
     def get_by_id(self, agent_id: str) -> dict | None:
         row = self.conn.execute(
-            "SELECT id, name, card_url, skills, url, role FROM agents WHERE id=?", (agent_id,)
+            "SELECT id, name, card_url, skills, url, role, description FROM agents WHERE id=?",
+            (agent_id,),
         ).fetchone()
         if row is None:
             return None
         return {
-            "id": row[0], "name": row[1], "card_url": row[2],
-            "skills": json.loads(row[3]), "url": row[4], "role": row[5],
+            "id": row[0],
+            "agent_id": row[0],
+            "name": row[1],
+            "card_url": row[2],
+            "skills": json.loads(row[3]),
+            "url": row[4],
+            "role": row[5],
+            "description": row[6],
         }
 
     def close(self) -> None:

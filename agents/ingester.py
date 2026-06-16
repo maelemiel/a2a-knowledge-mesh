@@ -93,6 +93,7 @@ class PyprojectTomlScraper(Scraper):
             return
 
         import tomllib
+
         raw = self.path.read_text()
         data = tomllib.loads(raw)
 
@@ -104,22 +105,34 @@ class PyprojectTomlScraper(Scraper):
         # Python version
         python_ver = project.get("requires-python", "")
         if python_ver:
-            yield Fact(subject=subject, predicate="python-version",
-                       object=python_ver, source_id=self.name,
-                       source_url=self.path.as_uri())
+            yield Fact(
+                subject=subject,
+                predicate="python-version",
+                object=python_ver,
+                source_id=self.name,
+                source_url=self.path.as_uri(),
+            )
 
         # Dependencies
         for dep in project.get("dependencies", []):
-            yield Fact(subject=subject, predicate="dependency",
-                       object=dep, source_id=self.name,
-                       source_url=self.path.as_uri())
+            yield Fact(
+                subject=subject,
+                predicate="dependency",
+                object=dep,
+                source_id=self.name,
+                source_url=self.path.as_uri(),
+            )
 
         # Optional dependencies
         for opt_name, opt_deps in project.get("optional-dependencies", {}).items():
             for dep in opt_deps:
-                yield Fact(subject=subject, predicate=f"optional-dependency:{opt_name}",
-                           object=dep, source_id=self.name,
-                           source_url=self.path.as_uri())
+                yield Fact(
+                    subject=subject,
+                    predicate=f"optional-dependency:{opt_name}",
+                    object=dep,
+                    source_id=self.name,
+                    source_url=self.path.as_uri(),
+                )
 
         logger.info("PyprojectTomlScraper collected facts for %s", subject)
 
@@ -151,10 +164,13 @@ class EnvFileScraper(Scraper):
                 continue
             if "=" in line:
                 key, value = line.split("=", 1)
-                yield Fact(subject=subject, predicate="env-var",
-                           object=f"{key.strip()}={value.strip()}",
-                           source_id=self.name,
-                           source_url=self.path.as_uri())
+                yield Fact(
+                    subject=subject,
+                    predicate="env-var",
+                    object=f"{key.strip()}={value.strip()}",
+                    source_id=self.name,
+                    source_url=self.path.as_uri(),
+                )
 
         logger.info("EnvFileScraper collected facts for %s", subject)
 
@@ -208,13 +224,15 @@ class Ingester:
             sent = 0
 
             async for fact in scraper.collect():
-                batch.append({
-                    "subject": fact.subject,
-                    "predicate": fact.predicate,
-                    "object": fact.object,
-                    "source_id": fact.source_id,
-                    "source_url": fact.source_url,
-                })
+                batch.append(
+                    {
+                        "subject": fact.subject,
+                        "predicate": fact.predicate,
+                        "object": fact.object,
+                        "source_id": fact.source_id,
+                        "source_url": fact.source_url,
+                    }
+                )
                 if len(batch) >= self.batch_size:
                     await self._send_batch(batch)
                     sent += len(batch)

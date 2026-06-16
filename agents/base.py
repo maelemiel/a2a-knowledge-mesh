@@ -153,13 +153,17 @@ class Agent(ABC):
             )
         except NotImplementedError:
             return JSONResponse(
-                A2AResponse.error_response(METHOD_NOT_FOUND, f"Method not implemented: {req.method}", req_id=req.id).to_dict(),
+                A2AResponse.error_response(
+                    METHOD_NOT_FOUND, f"Method not implemented: {req.method}", req_id=req.id
+                ).to_dict(),
                 status_code=404,
             )
         except Exception as e:
             logger.exception("RPC %s failed", req.method)
             return JSONResponse(
-                A2AResponse.error_response(INTERNAL_ERROR, f"Internal error: {e}", req_id=req.id).to_dict(),
+                A2AResponse.error_response(
+                    INTERNAL_ERROR, f"Internal error: {e}", req_id=req.id
+                ).to_dict(),
                 status_code=500,
             )
 

@@ -40,7 +40,7 @@ def _parse_llm_json(content: str) -> list | dict | None:
     if cleaned.startswith("```"):
         first_nl = cleaned.find("\n")
         if first_nl != -1:
-            cleaned = cleaned[first_nl + 1:]
+            cleaned = cleaned[first_nl + 1 :]
         if cleaned.endswith("```"):
             cleaned = cleaned[:-3]
     cleaned = cleaned.strip()
@@ -50,6 +50,7 @@ def _parse_llm_json(content: str) -> list | dict | None:
         return json.loads(cleaned)
     except json.JSONDecodeError:
         import re
+
         fixed = re.sub(r",\s*}", "}", cleaned)
         fixed = re.sub(r",\s*]", "]", fixed)
         try:
@@ -83,11 +84,13 @@ def _postprocess_facts(facts: list[dict]) -> list[dict]:
             continue
         if "subject" not in f or "predicate" not in f or "object" not in f:
             continue
-        valid.append({
-            "subject": str(f.get("subject", "")),
-            "predicate": str(f.get("predicate", "")),
-            "object": str(f.get("object", "")),
-        })
+        valid.append(
+            {
+                "subject": str(f.get("subject", "")),
+                "predicate": str(f.get("predicate", "")),
+                "object": str(f.get("object", "")),
+            }
+        )
     cleaned = _deduplicate_facts(valid)
     cleaned = _filter_empty_object(cleaned)
     return cleaned

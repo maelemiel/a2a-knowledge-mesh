@@ -48,6 +48,7 @@ class ReconcilerStore:
 
     def __init__(self, db_path: str = str(DB_PATH)) -> None:
         import sqlite3
+
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(db_path, timeout=10)
         self.conn.execute("PRAGMA journal_mode=WAL")
@@ -69,16 +70,104 @@ class ReconcilerStore:
                 created_at INTEGER NOT NULL,
                 resolved_at INTEGER,
                 ai_suggested_fact_id INTEGER,
-                ai_reason TEXT
+                ai_reason TEXT,
+                -- MAE-53: semantic conflict metadata
+                semantic_confidence REAL,
+                semantic_reason TEXT,
+                -- MAE-54: auto-resolution scoring
+                severity TEXT,
+                score_confidence REAL,
+                auto_resolved INTEGER DEFAULT 0,
+                -- MAE-55: root cause analysis
+                root_cause TEXT,
+                truth_source TEXT,
+                suggested_fix TEXT,
+                fix_file TEXT
             )
         """)
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_conflicts_status ON conflicts(status)")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_conflicts_subject ON conflicts(subject)")
+        self.conn.commit()
+
+    def migrate_schema(self) -> None:
+        """Add columns missing in older schema versions (idempotent)."""
+        existing = {r[1] for r in self.conn.execute("PRAGMA table_info(conflicts)").fetchall()}
+        additions = {
+            "semantic_confidence": "REAL",
+            "semantic_reason": "TEXT",
+            "severity": "TEXT",
+            "score_confidence": "REAL",
+            "auto_resolved": "INTEGER DEFAULT 0",
+            "root_cause": "TEXT",
+            "truth_source": "TEXT",
+            "suggested_fix": "TEXT",
+            "fix_file": "TEXT",
+        }
+        for col, coltype in additions.items():
+            if col not in existing:
+                self.conn.execute(f"ALTER TABLE conflicts ADD COLUMN {col} {coltype}")
+        self.conn.commit()
+
+    def create(
+        self,
+        subject: str,
+        predicate: str,
+        fact_a_id: int,
+        fact_b_id: int,
+        source_a: str,
+        source_b: str,
+        ai_fact_id: int | None = None,
+        ai_reason: str | None = None,
+        semantic_confidence: float | None = None,
+        semantic_reason: str | None = None,
+        severity: str | None = None,
+        score_confidence: float | None = None,
+        root_cause: str | None = None,
+        truth_source: str | None = None,
+        suggested_fix: str | None = None,
+        fix_file: str | None = None,
+    ) -> dict:
+        conflict_id = str(uuid.uuid4())[:8]
+        ts = int(time.time())
         self.conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_conflicts_status ON conflicts(status)"
-        )
-        self.conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_conflicts_subject ON conflicts(subject)"
+            "INSERT INTO conflicts (id, subject, predicate, fact_a_id, fact_b_id, "
+            "source_a, source_b, created_at, ai_suggested_fact_id, ai_reason, "
+            "semantic_confidence, semantic_reason, severity, score_confidence, "
+            "root_cause, truth_source, suggested_fix, fix_file) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                conflict_id,
+                subject,
+                predicate,
+                fact_a_id,
+                fact_b_id,
+                source_a,
+                source_b,
+                ts,
+                ai_fact_id,
+                ai_reason,
+                semantic_confidence,
+                semantic_reason,
+                severity,
+                score_confidence,
+                root_cause,
+                truth_source,
+                suggested_fix,
+                fix_file,
+            ),
         )
         self.conn.commit()
+        return {
+            "conflict_id": conflict_id,
+            "status": "open",
+            "subject": subject,
+            "predicate": predicate,
+            "ai_suggested_fact_id": ai_fact_id,
+            "ai_reason": ai_reason,
+            "severity": severity,
+            "score_confidence": score_confidence,
+            "semantic_confidence": semantic_confidence,
+        }
 
     def create_conflict(
         self,
@@ -90,24 +179,19 @@ class ReconcilerStore:
         source_b: str,
         ai_suggested_fact_id: int | None = None,
         ai_reason: str | None = None,
+        **kwargs,
     ) -> dict:
-        conflict_id = str(uuid.uuid4())[:8]
-        ts = int(time.time())
-        self.conn.execute(
-            "INSERT INTO conflicts (id, subject, predicate, fact_a_id, fact_b_id, "
-            "source_a, source_b, created_at, ai_suggested_fact_id, ai_reason) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (conflict_id, subject, predicate, fact_a_id, fact_b_id,
-             source_a, source_b, ts, ai_suggested_fact_id, ai_reason),
+        return self.create(
+            subject=subject,
+            predicate=predicate,
+            fact_a_id=fact_a_id,
+            fact_b_id=fact_b_id,
+            source_a=source_a,
+            source_b=source_b,
+            ai_fact_id=ai_suggested_fact_id,
+            ai_reason=ai_reason,
+            **kwargs,
         )
-        self.conn.commit()
-        return {
-            "conflict_id": conflict_id,
-            "subject": subject,
-            "predicate": predicate,
-            "ai_suggested_fact_id": ai_suggested_fact_id,
-            "ai_reason": ai_reason,
-        }
 
     def get_conflict_for_pair(self, fact_a_id: int, fact_b_id: int) -> dict | None:
         row = self.conn.execute(
@@ -134,6 +218,16 @@ class ReconcilerStore:
             "status": row[3],
         }
 
+    def mark_auto_resolved(self, conflict_id: str, winner_fact_id: int, reason: str) -> dict:
+        ts = int(time.time())
+        self.conn.execute(
+            "UPDATE conflicts SET status='resolved', resolution_fact_id=?, "
+            "resolution_reason=?, resolved_at=?, auto_resolved=1 WHERE id=?",
+            (winner_fact_id, reason, ts, conflict_id),
+        )
+        self.conn.commit()
+        return {"conflict_id": conflict_id, "status": "resolved", "auto_resolved": True}
+
     def resolve(self, conflict_id: str, resolution_fact_id: int, reason: str) -> dict:
         ts = int(time.time())
         self.conn.execute(
@@ -148,34 +242,60 @@ class ReconcilerStore:
     def get_open(self) -> list[dict]:
         rows = self.conn.execute(
             "SELECT id, subject, predicate, fact_a_id, fact_b_id, source_a, source_b, "
-            "band_room_id, created_at, ai_suggested_fact_id, ai_reason "
+            "band_room_id, created_at, ai_suggested_fact_id, ai_reason, "
+            "semantic_confidence, severity, score_confidence, auto_resolved "
             "FROM conflicts WHERE status='open' ORDER BY created_at DESC"
         ).fetchall()
-        return [
-            {
-                "conflict_id": r[0], "subject": r[1], "predicate": r[2],
-                "fact_a_id": r[3], "fact_b_id": r[4],
-                "source_a": r[5], "source_b": r[6],
-                "band_room_id": r[7], "created_at": r[8],
-                "ai_suggested_fact_id": r[9], "ai_reason": r[10],
-            }
-            for r in rows
+        keys = [
+            "conflict_id",
+            "subject",
+            "predicate",
+            "fact_a_id",
+            "fact_b_id",
+            "source_a",
+            "source_b",
+            "band_room_id",
+            "created_at",
+            "ai_suggested_fact_id",
+            "ai_reason",
+            "semantic_confidence",
+            "severity",
+            "score_confidence",
+            "auto_resolved",
         ]
+        return [dict(zip(keys, r)) for r in rows]
 
     def get_all(self) -> list[dict]:
         rows = self.conn.execute(
             "SELECT id, subject, predicate, status, created_at, resolved_at, "
-            "ai_suggested_fact_id, ai_reason "
+            "resolution_fact_id, resolution_reason, ai_suggested_fact_id, ai_reason, "
+            "severity, score_confidence, auto_resolved, root_cause, truth_source, "
+            "suggested_fix, fix_file "
             "FROM conflicts ORDER BY created_at DESC"
         ).fetchall()
-        return [
-            {
-                "conflict_id": r[0], "subject": r[1], "predicate": r[2],
-                "status": r[3], "created_at": r[4], "resolved_at": r[5],
-                "ai_suggested_fact_id": r[6], "ai_reason": r[7],
-            }
-            for r in rows
+        keys = [
+            "conflict_id",
+            "subject",
+            "predicate",
+            "status",
+            "created_at",
+            "resolved_at",
+            "resolution_fact_id",
+            "resolution_reason",
+            "ai_suggested_fact_id",
+            "ai_reason",
+            "severity",
+            "score_confidence",
+            "auto_resolved",
+            "root_cause",
+            "truth_source",
+            "suggested_fix",
+            "fix_file",
         ]
+        return [dict(zip(keys, r)) for r in rows]
+
+    def get_fact_row(self, subject: str, predicate: str) -> list[dict]:
+        return []
 
     def set_band_room(self, conflict_id: str, room_id: str) -> None:
         self.conn.execute(
@@ -252,11 +372,15 @@ class BandClient:
                     )
 
                 except httpx.TimeoutException:
-                    logger.warning("Band create_room timeout attempt %d/%d", attempt, self.max_retries)
+                    logger.warning(
+                        "Band create_room timeout attempt %d/%d", attempt, self.max_retries
+                    )
                     if attempt < self.max_retries:
                         await _exponential_backoff(attempt)
                         continue
-                    raise BandError(f"Band create_room timeout after {self.max_retries} retries") from None
+                    raise BandError(
+                        f"Band create_room timeout after {self.max_retries} retries"
+                    ) from None
 
             raise BandError("Band create_room exhausted retries")
 
@@ -289,16 +413,18 @@ class BandClient:
                         await _exponential_backoff(attempt)
                         continue
 
-                    raise BandError(
-                        f"Band post_message HTTP {resp.status_code}: {resp.text[:300]}"
-                    )
+                    raise BandError(f"Band post_message HTTP {resp.status_code}: {resp.text[:300]}")
 
                 except httpx.TimeoutException:
-                    logger.warning("Band post_message timeout attempt %d/%d", attempt, self.max_retries)
+                    logger.warning(
+                        "Band post_message timeout attempt %d/%d", attempt, self.max_retries
+                    )
                     if attempt < self.max_retries:
                         await _exponential_backoff(attempt)
                         continue
-                    raise BandError(f"Band post_message timeout after {self.max_retries} retries") from None
+                    raise BandError(
+                        f"Band post_message timeout after {self.max_retries} retries"
+                    ) from None
 
             raise BandError("Band post_message exhausted retries")
 
@@ -308,6 +434,7 @@ class BandClient:
 
 async def _exponential_backoff(attempt: int) -> None:
     import asyncio
+
     delay = min(0.5 * (2 ** (attempt - 1)), 5.0)
     await asyncio.sleep(delay)
 
@@ -353,6 +480,7 @@ def _parse_llm_json(content: str) -> dict | None:
     # Attempt fix: strip trailing comma before closing braces
     try:
         import re as _re
+
         fixed = _re.sub(r",\s*}", "}", cleaned)
         fixed = _re.sub(r",\s*\]", "]", fixed)
         return json.loads(fixed)
@@ -362,20 +490,89 @@ def _parse_llm_json(content: str) -> dict | None:
     return None
 
 
-async def _get_ai_suggestion(a: dict, b: dict) -> tuple[int | None, str]:
-    """Ask LLM which fact is correct; fallback to timestamp heuristic.
+async def _llm_call(
+    system: str,
+    user: str,
+    max_tokens: int = 300,
+) -> dict | None:
+    """Low-level LLM call via httpx.AsyncClient.
 
-    Provider chain: Featherless → OpenAI → rule-based.
-    Uses ``httpx.AsyncClient``.  Resilient JSON parsing.
+    Provider chain: Featherless → OpenAI → returns None.
+    Returns parsed JSON dict or None.
     """
     featherless_key = os.getenv("FEATHERLESS_API_KEY") or os.getenv("FEATHERLESS_KEY")
     featherless_model = os.getenv("FEATHERLESS_MODEL", "Qwen/Qwen2.5-14B-Instruct")
     openai_key = os.getenv("OPENAI_API_KEY")
     openai_model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
-    api_key = None
-    base_url = None
-    model = None
+    api_key: str | None = None
+    base_url: str | None = None
+    model: str | None = None
+
+    if featherless_key:
+        api_key = featherless_key
+        base_url = "https://api.featherless.ai/v1/chat/completions"
+        model = featherless_model
+    elif openai_key:
+        api_key = openai_key
+        base_url = "https://api.openai.com/v1/chat/completions"
+        model = openai_model
+
+    if not api_key or not base_url:
+        return None
+
+    import asyncio
+
+    for attempt in range(1, 3):
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(15.0, connect=5.0)) as client:
+                resp = await client.post(
+                    base_url,
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": model,
+                        "messages": [
+                            {"role": "system", "content": system},
+                            {"role": "user", "content": user},
+                        ],
+                        "temperature": 0.2,
+                        "max_tokens": max_tokens,
+                    },
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                choices = data.get("choices", [])
+                if not choices:
+                    raise ValueError("LLM returned 0 choices")
+                raw = choices[0].get("message", {}).get("content", "")
+                parsed = _parse_llm_json(raw)
+                if parsed is None:
+                    raise ValueError(f"Unparseable JSON: {raw[:200]}")
+                return parsed
+        except Exception as e:
+            logger.warning("LLM attempt %d/2 failed: %s", attempt, e)
+            if attempt < 2:
+                await asyncio.sleep(1.5)
+
+    return None
+
+
+async def _llm_suggest(a: dict, b: dict) -> tuple[int, str]:
+    """Ask LLM which fact is correct. Returns (winner_fact_id, reason).
+
+    Provider chain: Featherless → OpenAI → timestamp fallback.
+    """
+    featherless_key = os.getenv("FEATHERLESS_API_KEY") or os.getenv("FEATHERLESS_KEY")
+    featherless_model = os.getenv("FEATHERLESS_MODEL", "Qwen/Qwen2.5-14B-Instruct")
+    openai_key = os.getenv("OPENAI_API_KEY")
+    openai_model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+
+    api_key: str | None = None
+    base_url: str | None = None
+    model: str | None = None
 
     if featherless_key:
         api_key = featherless_key
@@ -387,77 +584,276 @@ async def _get_ai_suggestion(a: dict, b: dict) -> tuple[int | None, str]:
         model = openai_model
 
     if not api_key:
-        # Rule-based fallback when no LLM is configured
-        winner_id = a["id"] if a["timestamp"] >= b["timestamp"] else b["id"]
-        return winner_id, "[Fallback Rule] Most recent fact by timestamp (no LLM configured)."
+        # Fallback: most recent fact wins
+        winner = a if a["timestamp"] >= b["timestamp"] else b
+        return winner["id"], "[Fallback Rule] Most recent fact by timestamp (no LLM configured)."
 
-    import asyncio
     from datetime import datetime as dt
 
-    system_prompt = (
-        "You are an expert AI data reconciliation agent. Compare two conflicting facts "
-        'and respond with a JSON object containing exactly two fields:\n'
+    system = (
+        "You are an expert AI data reconciliation agent. "
+        "Compare two conflicting facts and respond with JSON containing:\n"
         '- "winner_id": integer (ID of the correct fact)\n'
         '- "reason": string (concise explanation)\n\n'
-        "Return ONLY the raw JSON — no markdown, no code fences, no extra text."
+        "Return ONLY raw JSON — no markdown, no code fences."
     )
 
-    user_content = (
-        f"Compare conflicting facts:\n\n"
+    user = (
+        f"Compare these conflicting facts:\n\n"
         f"Fact A (ID={a['id']}): {a['subject']} → {a['predicate']} = {a['object']}\n"
         f"  Source: {a['source_id']} | Timestamp: {dt.fromtimestamp(a['timestamp']).isoformat()}\n\n"
         f"Fact B (ID={b['id']}): {b['subject']} → {b['predicate']} = {b['object']}\n"
         f"  Source: {b['source_id']} | Timestamp: {dt.fromtimestamp(b['timestamp']).isoformat()}"
     )
 
-    for attempt in range(1, 3):  # max 2 attempts per provider
+    import asyncio
+
+    for attempt in range(1, 3):
         try:
             async with httpx.AsyncClient(timeout=httpx.Timeout(15.0, connect=5.0)) as client:
-                assert base_url is not None  # already checked at top of function
+                assert base_url is not None
                 resp = await client.post(
                     base_url,
-                    headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json",
+                    },
                     json={
                         "model": model,
                         "messages": [
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": user_content},
+                            {"role": "system", "content": system},
+                            {"role": "user", "content": user},
                         ],
                         "temperature": 0.2,
                         "max_tokens": 300,
                     },
                 )
                 resp.raise_for_status()
-                response_data = resp.json()
-
-                # Defensive: handle non-standard response shapes
-                choices = response_data.get("choices", [])
+                data = resp.json()
+                choices = data.get("choices", [])
                 if not choices:
-                    msg = f"LLM returned 0 choices: {response_data.get('error', 'unknown')}"
-                    raise ValueError(msg)
-
-                raw_content = choices[0].get("message", {}).get("content", "")
-                parsed = _parse_llm_json(raw_content)
-
+                    raise ValueError("LLM returned 0 choices")
+                raw = choices[0].get("message", {}).get("content", "")
+                parsed = _parse_llm_json(raw)
                 if parsed is None:
-                    raise ValueError(f"LLM returned unparseable JSON: {raw_content[:200]}")
-
-                winner_id = int(parsed["winner_id"])
-                reason = str(parsed.get("reason", "No reason provided."))
-                return winner_id, reason
-
-        except Exception as exc:
-            logger.warning("LLM attempt %d/2 failed: %s", attempt, exc)
+                    raise ValueError(f"Unparseable JSON: {raw[:200]}")
+                return int(parsed["winner_id"]), str(parsed.get("reason", ""))
+        except Exception as e:
+            logger.warning("LLM attempt %d/2 failed: %s", attempt, e)
             if attempt < 2:
-                await asyncio.sleep(1.0)
-            else:
-                # All retries exhausted → fallback
-                winner_id = a["id"] if a["timestamp"] >= b["timestamp"] else b["id"]
-                reason = f"[Fallback Rule] LLM unavailable ({exc}). Recommended most recent by timestamp."
-                return winner_id, reason
+                await asyncio.sleep(1.5)
 
-    # Should not reach here, but satisfy type checker
-    return a["id"], "[Fallback Rule] Unexpected path."
+    # All retries exhausted — timestamp fallback
+    winner = a if a["timestamp"] >= b["timestamp"] else b
+    return winner["id"], "[Fallback Rule] LLM unavailable. Recommended most recent by timestamp."
+
+
+# Alias for reconciler.py internal usage
+_get_ai_suggestion = _llm_suggest
+
+
+async def _llm_is_real_conflict(fact_a: dict, fact_b: dict) -> dict:
+    """Ask LLM whether two facts are in real contradiction.
+
+    Returns: {"is_conflict": bool, "confidence": float, "reason": str}
+    Falls back to is_conflict=true with confidence=0.5 if LLM unavailable.
+    """
+    system = (
+        "You are a semantic conflict detector. "
+        "Compare two facts about the same subject and predicate. "
+        "Determine whether they are in REAL contradiction or are compatible. "
+        "Return JSON with: is_conflict (bool), confidence (0.0-1.0), reason (str).\n\n"
+        "Examples:\n"
+        "- 'Python >=3.10' vs 'Python 3.11+' → compatible, NOT a conflict\n"
+        "- 'Framework: FastAPI' vs 'Framework: Django' → REAL conflict\n"
+        "- 'port: 8080' vs 'port: 3000' → REAL conflict (different values for same config)\n"
+        "- 'version: 1.0' vs 'version: 2.0' → REAL conflict\n"
+        "- 'license: MIT' vs 'license: Apache-2.0' → REAL conflict\n\n"
+        "Return ONLY raw JSON — no markdown, no code fences."
+    )
+
+    user = (
+        f"Fact A: {fact_a['subject']} → {fact_a['predicate']} = {fact_a['object']}\n"
+        f"  Source: {fact_a['source_id']}\n\n"
+        f"Fact B: {fact_b['subject']} → {fact_b['predicate']} = {fact_b['object']}\n"
+        f"  Source: {fact_b['source_id']}"
+    )
+
+    result = await _llm_call(system, user, max_tokens=200)
+    if result is None:
+        return {
+            "is_conflict": True,
+            "confidence": 0.5,
+            "reason": "LLM unavailable — assuming conflict.",
+        }
+
+    return {
+        "is_conflict": bool(result.get("is_conflict", True)),
+        "confidence": float(result.get("confidence", 0.5)),
+        "reason": str(result.get("reason", "")),
+    }
+
+
+async def _llm_score_conflict(fact_a: dict, fact_b: dict) -> dict:
+    """Ask LLM to score a conflict and decide if it can be auto-resolved.
+
+    Returns: {
+        "severity": "CRITICAL|HIGH|MEDIUM|LOW",
+        "confidence": 0.95,
+        "auto_resolve": true,
+        "winner_id": 42,
+        "reason": "..."
+    }
+    Falls back to MEDIUM / no auto-resolve if LLM unavailable.
+    """
+    system = (
+        "You are a conflict scoring AI. Given two conflicting facts, assess:\n"
+        "- severity: CRITICAL (breaking changes, security), HIGH, MEDIUM, LOW\n"
+        "- confidence: how sure you are (0.0-1.0)\n"
+        "- auto_resolve: true if the conflict can be safely auto-resolved\n"
+        "- winner_id: which fact ID is most likely correct\n"
+        "- reason: brief explanation\n\n"
+        "Return JSON with: severity, confidence, auto_resolve, winner_id, reason.\n"
+        "Return ONLY raw JSON — no markdown, no code fences."
+    )
+
+    from datetime import datetime as dt
+
+    user = (
+        f"Fact A (ID={fact_a['id']}): {fact_a['subject']} → {fact_a['predicate']} = {fact_a['object']}\n"
+        f"  Source: {fact_a['source_id']} | Timestamp: {dt.fromtimestamp(fact_a['timestamp']).isoformat()}\n\n"
+        f"Fact B (ID={fact_b['id']}): {fact_b['subject']} → {fact_b['predicate']} = {fact_b['object']}\n"
+        f"  Source: {fact_b['source_id']} | Timestamp: {dt.fromtimestamp(fact_b['timestamp']).isoformat()}"
+    )
+
+    result = await _llm_call(system, user, max_tokens=300)
+    if result is None:
+        return {
+            "severity": "MEDIUM",
+            "confidence": 0.0,
+            "auto_resolve": False,
+            "winner_id": None,
+            "reason": "LLM unavailable — escalated to human.",
+        }
+
+    return {
+        "severity": str(result.get("severity", "MEDIUM")),
+        "confidence": float(result.get("confidence", 0.0)),
+        "auto_resolve": bool(result.get("auto_resolve", False)),
+        "winner_id": result.get("winner_id"),
+        "reason": str(result.get("reason", "")),
+    }
+
+
+async def _llm_root_cause(
+    fact_a: dict,
+    fact_b: dict,
+    file_a_content: str = "",
+    file_b_content: str = "",
+) -> dict:
+    """Ask LLM to explain WHY a conflict exists and propose a fix.
+
+    Returns: {
+        "root_cause": "...",
+        "truth_source": "...",
+        "suggested_fix": "...",
+        "fix_file": "...",
+    }
+    Falls back to empty strings if LLM unavailable.
+    """
+    system = (
+        "You are a root cause analyst for data conflicts. "
+        "Given two conflicting facts, explain:\n"
+        "- root_cause: why this conflict exists (e.g., 'Outdated docs', 'Migration drift')\n"
+        "- truth_source: which source should be trusted and why\n"
+        "- suggested_fix: a concrete diff-like fix suggestion\n"
+        "- fix_file: which file needs updating\n\n"
+        "Return JSON with: root_cause, truth_source, suggested_fix, fix_file.\n"
+        "Return ONLY raw JSON — no markdown, no code fences."
+    )
+
+    file_section = ""
+    if file_a_content:
+        file_section += f"\nFile A content:\n{file_a_content[:500]}\n"
+    if file_b_content:
+        file_section += f"\nFile B content:\n{file_b_content[:500]}\n"
+
+    user = (
+        f"Fact A (ID={fact_a['id']}): {fact_a['subject']} → {fact_a['predicate']} = {fact_a['object']}\n"
+        f"  Source: {fact_a['source_id']}\n\n"
+        f"Fact B (ID={fact_b['id']}): {fact_b['subject']} → {fact_b['predicate']} = {fact_b['object']}\n"
+        f"  Source: {fact_b['source_id']}"
+        f"{file_section}"
+    )
+
+    result = await _llm_call(system, user, max_tokens=400)
+    if result is None:
+        return {
+            "root_cause": "",
+            "truth_source": "",
+            "suggested_fix": "",
+            "fix_file": "",
+        }
+
+    return {
+        "root_cause": str(result.get("root_cause", "")),
+        "truth_source": str(result.get("truth_source", "")),
+        "suggested_fix": str(result.get("suggested_fix", "")),
+        "fix_file": str(result.get("fix_file", "")),
+    }
+
+
+def _build_conflict_message(
+    conflict: dict,
+    fact_a: dict,
+    fact_b: dict,
+    ai_label: str,
+    ai_reason: str,
+    score: dict | None = None,
+    root_cause: dict | None = None,
+    auto_resolved: bool = False,
+) -> str:
+    """Build a rich conflict message formatting."""
+    lines = [f"⚠️ CONFLIT #{conflict['conflict_id']}: {fact_a['predicate']} ({fact_a['subject']})"]
+
+    # Basic fact display
+    lines.append(f"  Fact A: {fact_a['object']} ({fact_a['source_id']})")
+    lines.append(f"  Fact B: {fact_b['object']} ({fact_b['source_id']})")
+
+    # Score
+    if score:
+        severity = score.get("severity", "MEDIUM")
+        conf = score.get("confidence", 0.0)
+        lines.append(f"📊 Score: {severity} | confiance: {conf:.2f}")
+
+    # LLM suggestion
+    if ai_label:
+        lines.append(
+            f"💡 AI suggère Fact {ai_label} (#{conflict.get('ai_suggested_fact_id', '?')})"
+        )
+        if ai_reason:
+            lines.append(f"   Raison: {ai_reason[:200]}")
+
+    # Root cause + fix
+    if root_cause:
+        rc = root_cause.get("root_cause", "")
+        if rc:
+            lines.append(f"🔍 Root cause: {rc}")
+        ts = root_cause.get("truth_source", "")
+        if ts:
+            lines.append(f"💡 Source de vérité: {ts}")
+        sf = root_cause.get("suggested_fix", "")
+        if sf:
+            lines.append(f"🛠 Correctif proposé: {sf[:200]}")
+        ff = root_cause.get("fix_file", "")
+        if ff:
+            lines.append(f"📄 Fichier: {ff}")
+
+    # Auto-resolution indicator
+    if auto_resolved:
+        lines.append("🤖 Auto-resolved ✅")
+
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -485,6 +881,7 @@ class ReconcilerAgent(Agent):
     ) -> None:
         super().__init__()
         self.store = ReconcilerStore()
+        self.store.migrate_schema()
         self.connection = self.store.conn
         self.keeper_url = keeper_url
         self.band: BandClient | None = None
@@ -497,9 +894,8 @@ class ReconcilerAgent(Agent):
 
         # Register the webhook endpoint for Band push-based resolution
         from starlette.routing import Route
-        self._starlette.routes.append(
-            Route("/band-webhook", self.band_webhook, methods=["POST"])
-        )
+
+        self._starlette.routes.append(Route("/band-webhook", self.band_webhook, methods=["POST"]))
 
     # ------------------------------------------------------------------
     # RPC dispatcher
@@ -544,12 +940,22 @@ class ReconcilerAgent(Agent):
         created: list[dict] = []
         for c in raw_conflicts:
             # Get AI suggestion (async)
-            fact_a = {"id": c["fact_a_id"], "source_id": c["source_a"],
-                      "object": c["object_a"], "timestamp": c["timestamp_a"],
-                      "subject": c["subject"], "predicate": c["predicate"]}
-            fact_b = {"id": c["fact_b_id"], "source_id": c["source_b"],
-                      "object": c["object_b"], "timestamp": c["timestamp_b"],
-                      "subject": c["subject"], "predicate": c["predicate"]}
+            fact_a = {
+                "id": c["fact_a_id"],
+                "source_id": c["source_a"],
+                "object": c["object_a"],
+                "timestamp": c["timestamp_a"],
+                "subject": c["subject"],
+                "predicate": c["predicate"],
+            }
+            fact_b = {
+                "id": c["fact_b_id"],
+                "source_id": c["source_b"],
+                "object": c["object_b"],
+                "timestamp": c["timestamp_b"],
+                "subject": c["subject"],
+                "predicate": c["predicate"],
+            }
 
             ai_id, ai_reason = await _get_ai_suggestion(fact_a, fact_b)
 
@@ -570,7 +976,9 @@ class ReconcilerAgent(Agent):
                 try:
                     await self._notify_band(fact_a, fact_b, conflict)
                 except Exception as e:
-                    logger.error("Band notification failed for conflict %s: %s", conflict["conflict_id"], e)
+                    logger.error(
+                        "Band notification failed for conflict %s: %s", conflict["conflict_id"], e
+                    )
 
         return {"conflicts": created, "count": len(created)}
 
@@ -651,7 +1059,9 @@ class ReconcilerAgent(Agent):
 
         if not room_id or not content:
             return JSONResponse(
-                A2AResponse.error_response(INVALID_PARAMS, "room_id and content required").to_dict(),
+                A2AResponse.error_response(
+                    INVALID_PARAMS, "room_id and content required"
+                ).to_dict(),
                 status_code=422,
             )
 
@@ -669,7 +1079,10 @@ class ReconcilerAgent(Agent):
         match = re.search(r"resolve\s+with\s+fact\s+(\d+)", content, re.IGNORECASE)
         if not match:
             return JSONResponse(
-                {"status": "unresolved", "message": "no 'resolve with fact <ID>' pattern found in message"},
+                {
+                    "status": "unresolved",
+                    "message": "no 'resolve with fact <ID>' pattern found in message",
+                },
             )
 
         fact_id = int(match.group(1))
@@ -689,7 +1102,9 @@ class ReconcilerAgent(Agent):
 
         # Keeper probe
         try:
-            await a2a_call(self.keeper_url, "list-facts", {"limit": 1}, target_role="keeper", timeout=3.0)
+            await a2a_call(
+                self.keeper_url, "list-facts", {"limit": 1}, target_role="keeper", timeout=3.0
+            )
             checks.append({"name": "keeper", "status": "UP", "detail": self.keeper_url})
         except Exception as e:
             checks.append({"name": "keeper", "status": "DOWN", "detail": str(e)})

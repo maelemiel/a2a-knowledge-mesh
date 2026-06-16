@@ -69,10 +69,12 @@ def _token_for_role(role: str) -> str:
 # Constants
 # ---------------------------------------------------------------------------
 
-PUBLIC_PATHS: frozenset[str] = frozenset({
-    "/health",
-    "/.well-known/agent-card.json",
-})
+PUBLIC_PATHS: frozenset[str] = frozenset(
+    {
+        "/health",
+        "/.well-known/agent-card.json",
+    }
+)
 
 ERROR_MISSING_TOKEN = -32001
 ERROR_FORBIDDEN = -32003
