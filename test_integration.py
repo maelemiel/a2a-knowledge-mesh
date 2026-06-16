@@ -14,8 +14,9 @@ import time
 from pathlib import Path
 
 import httpx
+import json
 
-from agents.auth import a2a_call, configure_auth
+from agents.auth import a2a_call, configure_auth, sign_body
 
 ROOT = Path(__file__).parent
 DATA_DIR = ROOT / "data"
@@ -234,9 +235,16 @@ async def test_flow() -> int:
     bad_version = {
         "jsonrpc": "1.0", "id": "test-ver", "method": "list-facts", "params": {}
     }
+    bad_version_bytes = json.dumps(bad_version).encode("utf-8")
     resp = httpx.post(
-        f"{url_keeper}/a2a", json=bad_version, timeout=5,
-        headers={"Authorization": f"Bearer {_TEST_TOKENS['keeper']}"},
+        f"{url_keeper}/a2a",
+        content=bad_version_bytes,
+        timeout=5,
+        headers={
+            "Authorization": f"Bearer {_TEST_TOKENS['keeper']}",
+            "X-A2A-Signature": sign_body(bad_version_bytes),
+            "Content-Type": "application/json",
+        },
     )
     assert resp.status_code == 400, f"expected 400, got {resp.status_code}"
     error_data = resp.json()
@@ -244,10 +252,17 @@ async def test_flow() -> int:
     print("  ✓ wrong jsonrpc version returns -32600")
 
     # Unknown method
+    bad_method = {"jsonrpc": "2.0", "id": "test-unk", "method": "nonexistent", "params": {}}
+    bad_method_bytes = json.dumps(bad_method).encode("utf-8")
     resp = httpx.post(
-        f"{url_keeper}/a2a", timeout=5,
-        json={"jsonrpc": "2.0", "id": "test-unk", "method": "nonexistent", "params": {}},
-        headers={"Authorization": f"Bearer {_TEST_TOKENS['keeper']}"},
+        f"{url_keeper}/a2a",
+        content=bad_method_bytes,
+        timeout=5,
+        headers={
+            "Authorization": f"Bearer {_TEST_TOKENS['keeper']}",
+            "X-A2A-Signature": sign_body(bad_method_bytes),
+            "Content-Type": "application/json",
+        },
     )
     assert resp.status_code == 404, f"expected 404, got {resp.status_code}"
     error_data = resp.json()

@@ -139,13 +139,45 @@ class A2AAuthMiddleware:
             return
 
         # HMAC signature check
-        hdr_sig = headers.get(b"x-a2a-signature", b"").decode("utf-8", errors="replace")
-        if hdr_sig:
-            # We need the body to verify HMAC — but we can't read it here
-            # without consuming the ASGI stream. This is a known limitation:
-            # HMAC verification requires body buffering.
-            # For now, skip HMAC at middleware level; trust the bearer token.
-            logger.debug("HMAC signature present but verified at app level only")
+        if _HMAC_SECRET:
+            hdr_sig = headers.get(b"x-a2a-signature", b"").decode("utf-8", errors="replace")
+            if not hdr_sig:
+                logger.warning("Auth rejected: missing HMAC signature for %s", path)
+                response = JSONResponse(
+                    _error_body(ERROR_FORBIDDEN, "missing x-a2a-signature header"),
+                    status_code=403,
+                )
+                await response(scope, receive, send)
+                return
+
+            # Buffer body to verify HMAC signature
+            body_chunks = []
+            messages = []
+            more_body = True
+            while more_body:
+                message = await receive()
+                messages.append(message)
+                more_body = message.get("more_body", False)
+                body_chunks.append(message.get("body", b""))
+
+            full_body = b"".join(body_chunks)
+            if not _verify_hmac(full_body, hdr_sig):
+                logger.warning("HMAC verification failed for %s", path)
+                response = JSONResponse(
+                    _error_body(ERROR_FORBIDDEN, "invalid HMAC signature"),
+                    status_code=403,
+                )
+                await response(scope, receive, send)
+                return
+
+            # Replay buffered chunks to downstream ASGI app
+            async def buffered_receive():
+                if messages:
+                    return messages.pop(0)
+                return await receive()
+
+            await self.app(scope, buffered_receive, send)
+            return
 
         await self.app(scope, receive, send)
 
@@ -173,6 +205,26 @@ def _verify_hmac(body: bytes, signature: str) -> bool:
 # ---------------------------------------------------------------------------
 # RPC caller helper (used by agents to call each other securely)
 # ---------------------------------------------------------------------------
+
+_A2A_CLIENT: httpx.AsyncClient | None = None
+
+
+async def get_a2a_client() -> httpx.AsyncClient:
+    """Get the shared/pooled httpx.AsyncClient instance."""
+    global _A2A_CLIENT
+    if _A2A_CLIENT is None or _A2A_CLIENT.is_closed:
+        _A2A_CLIENT = httpx.AsyncClient(
+            timeout=httpx.Timeout(15.0, connect=5.0),
+            limits=httpx.Limits(max_keepalive_connections=20, max_connections=100),
+        )
+    return _A2A_CLIENT
+
+
+async def close_a2a_client() -> None:
+    """Close the shared httpx.AsyncClient instance if open."""
+    global _A2A_CLIENT
+    if _A2A_CLIENT is not None and not _A2A_CLIENT.is_closed:
+        await _A2A_CLIENT.aclose()
 
 
 async def a2a_call(
@@ -202,18 +254,18 @@ async def a2a_call(
     if sig:
         headers["X-A2A-Signature"] = sig
 
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(
-            f"{url.rstrip('/')}/a2a",
-            content=body_bytes,
-            headers=headers,
-            timeout=timeout,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        if "error" in data:
-            raise RuntimeError(f"A2A error: {data['error']}")
-        return data.get("result", {})
+    client = await get_a2a_client()
+    resp = await client.post(
+        f"{url.rstrip('/')}/a2a",
+        content=body_bytes,
+        headers=headers,
+        timeout=timeout,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    if "error" in data:
+        raise RuntimeError(f"A2A error: {data['error']}")
+    return data.get("result", {})
 
 
 # ---------------------------------------------------------------------------

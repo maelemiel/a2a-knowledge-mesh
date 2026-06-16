@@ -58,12 +58,20 @@ class Agent(ABC):
     connection: Connection | None = None  # set by subclass for DB health
 
     def __init__(self) -> None:
+        import contextlib
+
+        @contextlib.asynccontextmanager
+        async def lifespan(_app):
+            yield
+            await self.shutdown_agent()
+
         self._starlette = Starlette(
             routes=[
                 Route("/.well-known/agent-card.json", self.get_card),
                 Route("/health", self.health),
                 Route("/a2a", self.rpc, methods=["POST"]),
             ],
+            lifespan=lifespan,
         )
         # Wrap with ASGI auth middleware.
         self.app = A2AAuthMiddleware(self._starlette, agent_role=self.agent_role)
@@ -186,6 +194,12 @@ class Agent(ABC):
     # ------------------------------------------------------------------
     # Runner
     # ------------------------------------------------------------------
+
+    async def shutdown_agent(self) -> None:
+        """Teardown method to release resources on shutdown."""
+        from agents.auth import close_a2a_client
+        logger.info("Stopping agent %r, closing shared connection pool", self.card.name)
+        await close_a2a_client()
 
     def run(self) -> None:
         uvicorn.run(self.app, host="0.0.0.0", port=self.port, log_level="info")

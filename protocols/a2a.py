@@ -99,7 +99,7 @@ class A2ARequest:
     method: str
     params: dict[str, Any] = field(default_factory=dict)
     jsonrpc: str = "2.0"
-    id: str | int | float | None = "req-001"
+    id: str | int | float | None = None
 
     @classmethod
     def from_dict(cls, d: dict) -> A2ARequest:

@@ -28,7 +28,8 @@ class KeeperStore:
 
     def __init__(self, db_path: str = str(DB_PATH)) -> None:
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(db_path, timeout=10)
+        self.conn = sqlite3.connect(db_path, timeout=10, check_same_thread=False)
+        self.conn.execute("PRAGMA foreign_keys=ON")
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA busy_timeout=5000")
         self.conn.execute("PRAGMA synchronous=NORMAL")
@@ -246,6 +247,13 @@ class KeeperStore:
 
     def close(self) -> None:
         self.conn.close()
+
+    def clear(self) -> int:
+        """Delete all facts. Returns count of deleted rows."""
+        count = self.conn.execute("SELECT COUNT(*) FROM facts").fetchone()[0]
+        self.conn.execute("DELETE FROM facts")
+        self.conn.commit()
+        return count
 
 
 class KeeperAgent(Agent):

@@ -11,7 +11,9 @@ Stores facts in SQLite. Replies in the room.
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 from typing import Any
 
 from band.core.protocols import AgentToolsProtocol
@@ -44,6 +46,10 @@ class KeeperAgent(BandAgent):
             await self._cmd_store(content[6:], tools)
             return
 
+        if content.startswith("store-batch "):
+            await self._cmd_store_batch(content[12:], tools)
+            return
+
         if content.startswith("recall "):
             await self._cmd_recall(content[7:], tools)
             return
@@ -54,6 +60,10 @@ class KeeperAgent(BandAgent):
 
         if content == "detect":
             await self._cmd_detect(tools)
+            return
+
+        if content == "clear":
+            await self._cmd_clear(tools, room_id)
             return
 
         if content.startswith("get "):
@@ -90,6 +100,56 @@ class KeeperAgent(BandAgent):
         await tools.send_message(
             f"✅ stored fact #{result['id']}: {subject} → {predicate} = {obj} (from {source})"
         )
+
+        # Auto-detect conflicts after every store
+        conflicts = self.store.detect_conflicts(limit=5)
+        if conflicts:
+            reconciler = os.getenv("BAND_RECONCILER_HANDLE", "reconciler")
+            lines = [f"detect — {len(conflicts)} conflit(s):"]
+            for c in conflicts:
+                lines.append(
+                    f"  • `{c['subject']}` → {c['predicate']}: "
+                    f"`{c['object_a']}` (src:{c['source_a']}) vs "
+                    f"`{c['object_b']}` (src:{c['source_b']})"
+                )
+            await tools.send_message(
+                "\n".join(lines),
+                mentions=[reconciler],
+            )
+
+    async def _cmd_store_batch(self, json_str: str, tools: AgentToolsProtocol) -> None:
+        """Store multiple facts from a JSON string."""
+        try:
+            facts = json.loads(json_str.strip())
+        except (json.JSONDecodeError, TypeError) as e:
+            await tools.send_message(f"⚠️ Invalid JSON: {e}")
+            return
+
+        if not isinstance(facts, list):
+            await tools.send_message("⚠️ Expected a JSON array of facts")
+            return
+
+        results = self.store.store_batch(facts)
+        stored = len(results)
+        await tools.send_message(
+            f"✅ stored {stored} fact(s)"
+        )
+
+        # Auto-detect after batch
+        conflicts = self.store.detect_conflicts(limit=5)
+        if conflicts:
+            reconciler = os.getenv("BAND_RECONCILER_HANDLE", "mael2perso/reconciler")
+            lines = [f"detect — {len(conflicts)} conflit(s):"]
+            for c in conflicts:
+                lines.append(
+                    f"  • `{c['subject']}` → {c['predicate']}: "
+                    f"`{c['object_a']}` (src:{c['source_a']}) vs "
+                    f"`{c['object_b']}` (src:{c['source_b']})"
+                )
+            await tools.send_message(
+                "\n".join(lines),
+                mentions=[reconciler],
+            )
 
     async def _cmd_recall(self, args: str, tools: AgentToolsProtocol) -> None:
         subject = args.strip() or None
@@ -131,6 +191,10 @@ class KeeperAgent(BandAgent):
                 f"#{c['fact_b_id']} ({c['source_b']})"
             )
         await tools.send_message("\n".join(lines))
+
+    async def _cmd_clear(self, tools: AgentToolsProtocol, room_id: str) -> None:
+        count = self.store.clear()
+        await tools.send_message(f"🗑️ Cleared {count} fact(s) from database")
 
     async def _cmd_get(self, args: str, tools: AgentToolsProtocol) -> None:
         try:

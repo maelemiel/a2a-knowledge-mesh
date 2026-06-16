@@ -30,6 +30,12 @@ from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).parent.parent / ".env")
 
+# ── Logging config ────────────────────────────────────────────────────
+# Suppress noisy SDK loggers — only show WARNING+
+for _lib in ("httpx", "band", "phoenix_channels_python_client",
+             "band.client", "band.runtime", "band.platform", "band.preprocessing"):
+    logging.getLogger(_lib).setLevel(logging.WARNING)
+
 logger = logging.getLogger(__name__)
 
 
@@ -83,7 +89,8 @@ class BandAgent(SimpleAdapter[Any]):
             await self.on_bootstrap(room_id, tools)
 
         # Wrap tools to auto-@mention the sender in every reply
-        sender = msg.sender_name
+        # If sender is another agent → mention the human user instead (avoid loops)
+        sender = msg.sender_name if msg.sender_type == "User" else os.getenv("BAND_USER_HANDLE")
         original_send = tools.send_message
 
         async def _send(content: str, **kwargs: Any) -> Any:
@@ -93,6 +100,26 @@ class BandAgent(SimpleAdapter[Any]):
             return await original_send(content, mentions=mentions, **kwargs)
 
         tools.send_message = _send  # type: ignore[method-assign]
+
+        if is_session_bootstrap:
+            # Auto-announce + register in the shared room
+            hq = os.getenv("BAND_HQ_ROOM_ID", "")
+            if hq and room_id == hq:
+                await tools.send_message(
+                    f"🤖 **{self.agent_name}** en ligne — {self.agent_description}"
+                )
+                # Self-register with Registry
+                reg = os.getenv("BAND_REGISTRY_HANDLE", "registry")
+                skills = {"Keeper": "store,recall,list,detect",
+                          "Registry": "register,discover,list",
+                          "Reconciler": "detect,status,resolve",
+                          "Scraper": "slurp-git,slurp-slack,slurp-teams"}.get(
+                    self.agent_name, "unknown"
+                )
+                await tools.send_message(
+                    f"@{reg} register name={self.agent_name} skills={skills} "
+                    f"description={self.agent_description}"
+                )
 
         # Strip leading @mentions from content before passing to handler
         # (e.g. "@Keeper store ..." → "store ...")

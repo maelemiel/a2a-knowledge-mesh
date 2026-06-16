@@ -186,7 +186,7 @@ def cmd_start() -> None:
     import subprocess
 
     missing = []
-    for var in ["BAND_REGISTRY_ID", "BAND_KEEPER_ID", "BAND_RECONCILER_ID"]:
+    for var in ["BAND_REGISTRY_ID", "BAND_KEEPER_ID", "BAND_RECONCILER_ID", "BAND_SCRAPER_ID"]:
         if not os.getenv(var):
             missing.append(var)
     if missing:
@@ -194,7 +194,7 @@ def cmd_start() -> None:
         print("   Set them in .env before starting agents.")
         return
 
-    agent_names = ["registry_band", "keeper_band", "reconciler_band"]
+    agent_names = ["registry_band", "keeper_band", "reconciler_band", "scraper_band"]
     procs = []
     for name in agent_names:
         p = subprocess.Popen(
@@ -207,14 +207,34 @@ def cmd_start() -> None:
         print(f"[{name}] started (pid={p.pid})")
 
     try:
+        import select
+        buffers = {p.stdout: b"" for p in procs if p.stdout}
+        while procs:
+            # Clean up dead processes
+            procs = [p for p in procs if p.poll() is None]
+            if not procs and not any(buffers.values()):
+                break
+            readable, _, _ = select.select(
+                [f for f in buffers if f and not f.closed], [], [], 0.5
+            )
+            for f in readable:
+                try:
+                    chunk = f.read1(4096)
+                    if chunk:
+                        sys.stdout.buffer.write(chunk)
+                        sys.stdout.buffer.flush()
+                except Exception:
+                    pass
+    except KeyboardInterrupt:
+        for p in procs:
+            p.terminate()
+    except ImportError:
+        # Fallback: read sequentially
         for p in procs:
             if p.stdout:
                 for line in p.stdout:
                     sys.stdout.buffer.write(line)
                     sys.stdout.buffer.flush()
-    except KeyboardInterrupt:
-        for p in procs:
-            p.terminate()
 
 
 def cmd_help() -> None:

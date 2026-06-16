@@ -12,7 +12,6 @@ Supports:
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import re
@@ -25,6 +24,7 @@ import httpx
 
 from agents.auth import a2a_call
 from agents.base import Agent
+from agents.provider import provider
 from agents.validation import DetectConflictParams, ResolveParams
 from protocols.a2a import AgentCard, A2AResponse, INVALID_PARAMS
 
@@ -50,7 +50,8 @@ class ReconcilerStore:
         import sqlite3
 
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(db_path, timeout=10)
+        self.conn = sqlite3.connect(db_path, timeout=10, check_same_thread=False)
+        self.conn.execute("PRAGMA foreign_keys=ON")
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA busy_timeout=5000")
         self.conn.execute("PRAGMA synchronous=NORMAL")
@@ -336,97 +337,97 @@ class BandClient:
             timeout=httpx.Timeout(10.0, connect=5.0),
         )
 
-        async def create_room(self, title: str) -> dict:
-            """Create a Band chat room. Raises BandError on failure."""
-            for attempt in range(1, self.max_retries + 1):
-                try:
-                    resp = await self._client.post(
-                        "/agent/chats",
-                        json={
-                            "chat": {
-                                "title": title,
-                            }
-                        },
-                    )
+    async def create_room(self, title: str) -> dict:
+        """Create a Band chat room. Raises BandError on failure."""
+        for attempt in range(1, self.max_retries + 1):
+            try:
+                resp = await self._client.post(
+                    "/agent/chats",
+                    json={
+                        "chat": {
+                            "title": title,
+                        }
+                    },
+                )
 
-                    if resp.is_success:
-                        data = resp.json()
-                        room = data.get("data", data)
-                        logger.info("Band chat created: %s (title=%r)", room.get("id"), title)
-                        return room
+                if resp.is_success:
+                    data = resp.json()
+                    room = data.get("data", data)
+                    logger.info("Band chat created: %s (title=%r)", room.get("id"), title)
+                    return room
 
-                    logger.warning(
-                        "Band create_room attempt %d/%d: HTTP %d %s",
-                        attempt,
-                        self.max_retries,
-                        resp.status_code,
-                        resp.text[:300],
-                    )
+                logger.warning(
+                    "Band create_room attempt %d/%d: HTTP %d %s",
+                    attempt,
+                    self.max_retries,
+                    resp.status_code,
+                    resp.text[:300],
+                )
 
-                    if resp.status_code in (429, 500, 502, 503):
-                        await _exponential_backoff(attempt)
-                        continue
+                if resp.status_code in (429, 500, 502, 503):
+                    await _exponential_backoff(attempt)
+                    continue
 
-                    raise BandError(
-                        f"Band create_room failed: HTTP {resp.status_code} – {resp.text[:300]}"
-                    )
+                raise BandError(
+                    f"Band create_room failed: HTTP {resp.status_code} – {resp.text[:300]}"
+                )
 
-                except httpx.TimeoutException:
-                    logger.warning(
-                        "Band create_room timeout attempt %d/%d", attempt, self.max_retries
-                    )
-                    if attempt < self.max_retries:
-                        await _exponential_backoff(attempt)
-                        continue
-                    raise BandError(
-                        f"Band create_room timeout after {self.max_retries} retries"
-                    ) from None
+            except httpx.TimeoutException:
+                logger.warning(
+                    "Band create_room timeout attempt %d/%d", attempt, self.max_retries
+                )
+                if attempt < self.max_retries:
+                    await _exponential_backoff(attempt)
+                    continue
+                raise BandError(
+                    f"Band create_room timeout after {self.max_retries} retries"
+                ) from None
 
-            raise BandError("Band create_room exhausted retries")
+        raise BandError("Band create_room exhausted retries")
 
-        async def post_message(self, room_id: str, message: str) -> dict:
-            """Post a conflict event to a Band chat room."""
-            for attempt in range(1, self.max_retries + 1):
-                try:
-                    resp = await self._client.post(
-                        f"/agent/chats/{room_id}/events",
-                        json={
-                            "event": {
-                                "content": message,
-                                "message_type": "task",
-                            }
-                        },
-                    )
+    async def post_message(self, room_id: str, message: str) -> dict:
+        """Post a conflict event to a Band chat room."""
+        for attempt in range(1, self.max_retries + 1):
+            try:
+                resp = await self._client.post(
+                    f"/agent/chats/{room_id}/events",
+                    json={
+                        "event": {
+                            "content": message,
+                            "message_type": "task",
+                        }
+                    },
+                )
 
-                    if resp.is_success:
-                        return resp.json()
+                if resp.is_success:
+                    return resp.json()
 
-                    logger.warning(
-                        "Band post_message attempt %d/%d: HTTP %d %s",
-                        attempt,
-                        self.max_retries,
-                        resp.status_code,
-                        resp.text[:300],
-                    )
+                logger.warning(
+                    "Band post_message attempt %d/%d: HTTP %d %s",
+                    attempt,
+                    self.max_retries,
+                    resp.status_code,
+                    resp.text[:300],
+                )
 
-                    if resp.status_code in (429, 500, 502, 503):
-                        await _exponential_backoff(attempt)
-                        continue
+                if resp.status_code in (429, 500, 502, 503):
+                    await _exponential_backoff(attempt)
+                    continue
 
-                    raise BandError(f"Band post_message HTTP {resp.status_code}: {resp.text[:300]}")
+                raise BandError(f"Band post_message HTTP {resp.status_code}: {resp.text[:300]}")
 
-                except httpx.TimeoutException:
-                    logger.warning(
-                        "Band post_message timeout attempt %d/%d", attempt, self.max_retries
-                    )
-                    if attempt < self.max_retries:
-                        await _exponential_backoff(attempt)
-                        continue
-                    raise BandError(
-                        f"Band post_message timeout after {self.max_retries} retries"
-                    ) from None
+            except httpx.TimeoutException:
+                logger.warning(
+                    "Band post_message timeout attempt %d/%d", attempt, self.max_retries
+                )
+                if attempt < self.max_retries:
+                    await _exponential_backoff(attempt)
+                    continue
+                raise BandError(
+                    f"Band post_message timeout after {self.max_retries} retries"
+                ) from None
 
-            raise BandError("Band post_message exhausted retries")
+        raise BandError("Band post_message exhausted retries")
 
     async def aclose(self) -> None:
         await self._client.aclose()
@@ -444,50 +445,7 @@ async def _exponential_backoff(attempt: int) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _parse_llm_json(content: str) -> dict | None:
-    """Resilient JSON parser for LLM output.
-
-    Handles:
-    - ```json ... ``` wrapping (with/without language tag)
-    - Trailing commas
-    - Leading/trailing whitespace and control chars
-    - Incomplete truncated JSON (returns None)
-    """
-    if not content:
-        return None
-
-    cleaned = content.strip()
-    # Remove markdown code fences
-    if cleaned.startswith("```"):
-        # Remove opening fence (with optional language tag)
-        first_newline = cleaned.find("\n")
-        if first_newline != -1:
-            cleaned = cleaned[first_newline + 1 :]
-        # Remove closing fence if present
-        if cleaned.endswith("```"):
-            cleaned = cleaned[:-3]
-
-    cleaned = cleaned.strip()
-    if not cleaned:
-        return None
-
-    # Attempt strict parse first
-    try:
-        return json.loads(cleaned)
-    except json.JSONDecodeError:
-        pass
-
-    # Attempt fix: strip trailing comma before closing braces
-    try:
-        import re as _re
-
-        fixed = _re.sub(r",\s*}", "}", cleaned)
-        fixed = _re.sub(r",\s*\]", "]", fixed)
-        return json.loads(fixed)
-    except json.JSONDecodeError:
-        pass
-
-    return None
+from protocols.json_parser import parse_llm_json as _parse_llm_json
 
 
 async def _llm_call(
@@ -495,68 +453,19 @@ async def _llm_call(
     user: str,
     max_tokens: int = 300,
 ) -> dict | None:
-    """Low-level LLM call via httpx.AsyncClient.
+    """Low-level LLM call via shared provider.
 
     Provider chain: Featherless → OpenAI → returns None.
     Returns parsed JSON dict or None.
     """
-    featherless_key = os.getenv("FEATHERLESS_API_KEY") or os.getenv("FEATHERLESS_KEY")
-    featherless_model = os.getenv("FEATHERLESS_MODEL", "Qwen/Qwen2.5-14B-Instruct")
-    openai_key = os.getenv("OPENAI_API_KEY")
-    openai_model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-
-    api_key: str | None = None
-    base_url: str | None = None
-    model: str | None = None
-
-    if featherless_key:
-        api_key = featherless_key
-        base_url = "https://api.featherless.ai/v1/chat/completions"
-        model = featherless_model
-    elif openai_key:
-        api_key = openai_key
-        base_url = "https://api.openai.com/v1/chat/completions"
-        model = openai_model
-
-    if not api_key or not base_url:
-        return None
-
-    import asyncio
-
-    for attempt in range(1, 3):
-        try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(15.0, connect=5.0)) as client:
-                resp = await client.post(
-                    base_url,
-                    headers={
-                        "Authorization": f"Bearer {api_key}",
-                        "Content-Type": "application/json",
-                    },
-                    json={
-                        "model": model,
-                        "messages": [
-                            {"role": "system", "content": system},
-                            {"role": "user", "content": user},
-                        ],
-                        "temperature": 0.2,
-                        "max_tokens": max_tokens,
-                    },
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                choices = data.get("choices", [])
-                if not choices:
-                    raise ValueError("LLM returned 0 choices")
-                raw = choices[0].get("message", {}).get("content", "")
-                parsed = _parse_llm_json(raw)
-                if parsed is None:
-                    raise ValueError(f"Unparseable JSON: {raw[:200]}")
-                return parsed
-        except Exception as e:
-            logger.warning("LLM attempt %d/2 failed: %s", attempt, e)
-            if attempt < 2:
-                await asyncio.sleep(1.5)
-
+    result = await provider.chat_completion(
+        system, user,
+        temperature=0.2,
+        max_tokens=max_tokens,
+        parse_json=True,
+    )
+    if isinstance(result, dict):
+        return result
     return None
 
 
@@ -565,29 +474,6 @@ async def _llm_suggest(a: dict, b: dict) -> tuple[int, str]:
 
     Provider chain: Featherless → OpenAI → timestamp fallback.
     """
-    featherless_key = os.getenv("FEATHERLESS_API_KEY") or os.getenv("FEATHERLESS_KEY")
-    featherless_model = os.getenv("FEATHERLESS_MODEL", "Qwen/Qwen2.5-14B-Instruct")
-    openai_key = os.getenv("OPENAI_API_KEY")
-    openai_model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-
-    api_key: str | None = None
-    base_url: str | None = None
-    model: str | None = None
-
-    if featherless_key:
-        api_key = featherless_key
-        base_url = "https://api.featherless.ai/v1/chat/completions"
-        model = featherless_model
-    elif openai_key:
-        api_key = openai_key
-        base_url = "https://api.openai.com/v1/chat/completions"
-        model = openai_model
-
-    if not api_key:
-        # Fallback: most recent fact wins
-        winner = a if a["timestamp"] >= b["timestamp"] else b
-        return winner["id"], "[Fallback Rule] Most recent fact by timestamp (no LLM configured)."
-
     from datetime import datetime as dt
 
     system = (
@@ -606,46 +492,19 @@ async def _llm_suggest(a: dict, b: dict) -> tuple[int, str]:
         f"  Source: {b['source_id']} | Timestamp: {dt.fromtimestamp(b['timestamp']).isoformat()}"
     )
 
-    import asyncio
+    result = await provider.chat_completion(
+        system, user,
+        temperature=0.2,
+        max_tokens=300,
+        parse_json=True,
+    )
 
-    for attempt in range(1, 3):
-        try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(15.0, connect=5.0)) as client:
-                assert base_url is not None
-                resp = await client.post(
-                    base_url,
-                    headers={
-                        "Authorization": f"Bearer {api_key}",
-                        "Content-Type": "application/json",
-                    },
-                    json={
-                        "model": model,
-                        "messages": [
-                            {"role": "system", "content": system},
-                            {"role": "user", "content": user},
-                        ],
-                        "temperature": 0.2,
-                        "max_tokens": 300,
-                    },
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                choices = data.get("choices", [])
-                if not choices:
-                    raise ValueError("LLM returned 0 choices")
-                raw = choices[0].get("message", {}).get("content", "")
-                parsed = _parse_llm_json(raw)
-                if parsed is None:
-                    raise ValueError(f"Unparseable JSON: {raw[:200]}")
-                return int(parsed["winner_id"]), str(parsed.get("reason", ""))
-        except Exception as e:
-            logger.warning("LLM attempt %d/2 failed: %s", attempt, e)
-            if attempt < 2:
-                await asyncio.sleep(1.5)
+    if isinstance(result, dict) and "winner_id" in result:
+        return int(result["winner_id"]), str(result.get("reason", ""))
 
-    # All retries exhausted — timestamp fallback
+    # Fallback: most recent fact wins
     winner = a if a["timestamp"] >= b["timestamp"] else b
-    return winner["id"], "[Fallback Rule] LLM unavailable. Recommended most recent by timestamp."
+    return winner["id"], "[Fallback Rule] LLM suggestion failed or unavailable, used most recent fact."
 
 
 # Alias for reconciler.py internal usage
@@ -901,12 +760,12 @@ class ReconcilerAgent(Agent):
     # RPC dispatcher
     # ------------------------------------------------------------------
 
-    def handle_rpc(self, method: str, params: dict[str, Any]) -> Any:
+    async def handle_rpc(self, method: str, params: dict[str, Any]) -> Any:
         if method == "detect-conflict":
-            return self._detect(params)
+            return await self._detect(params)
 
         if method == "resolve":
-            return self._resolve(params)
+            return await self._resolve(params)
 
         if method == "status":
             return {"open": self.store.get_open(), "all": self.store.get_all()}
@@ -1008,30 +867,63 @@ class ReconcilerAgent(Agent):
         room_id = room.get("id", "")
         self.store.set_band_room(conflict["conflict_id"], room_id)
 
-        ai_text = ""
-        if conflict.get("ai_suggested_fact_id"):
-            winner_fact = a if conflict["ai_suggested_fact_id"] == a["id"] else b
-            ai_text = (
-                f"\n**AI Recommendation:**\n"
-                f"- Suggested winner: {winner_fact['object']}\n"
-                f"- Reason: {conflict.get('ai_reason', 'N/A')}\n"
-            )
+        import asyncio
 
-        message = (
-            f"**Conflict detected**\n"
-            f"- **Subject:** {a['subject']}\n"
-            f"- **Predicate:** {a['predicate']}\n\n"
-            f"**Fact A** ({a['source_id']}): {a['object']} (ID: {a['id']})\n"
-            f"**Fact B** ({b['source_id']}): {b['object']} (ID: {b['id']})\n"
-            f"{ai_text}\n"
-            f"To resolve, reply: `resolve with fact <ID> because <reason>`\n"
-            f"Or use CLI: `mesh resolve {conflict['conflict_id']} <fact_id>`"
+        # ── Act 1: Registry announces the discovery ──
+        registry_msg = (
+            "🔍 **[Registry Agent]** J'ai découvert le Keeper Agent (port 8766) "
+            "et le Reconciler Agent (port 8767) pour traiter ce conflit.\n"
+            f"_Conflit: {a['subject']} / {a['predicate']}_"
         )
-
         try:
-            await self.band.post_message(room_id, message)
+            await self.band.post_message(room_id, registry_msg)
+            await asyncio.sleep(0.3)
         except BandError as e:
-            logger.error("Cannot post to Band room %s: %s", room_id, e)
+            logger.error("Cannot post Registry message to room %s: %s", room_id, e)
+
+        # ── Act 2: Keeper reports the contradiction ──
+        keeper_msg = (
+            f"💾 **[Keeper Agent]** Contradiction détectée en base :\n"
+            f"- Fait A (ID={a['id']}) provenant de *{a['source_id']}* : "
+            f"**{a['object']}**\n"
+            f"- Fait B (ID={b['id']}) provenant de *{b['source_id']}* : "
+            f"**{b['object']}**\n\n"
+            f"_Transmission au Reconciler pour analyse IA..._"
+        )
+        try:
+            await self.band.post_message(room_id, keeper_msg)
+            await asyncio.sleep(0.3)
+        except BandError as e:
+            logger.error("Cannot post Keeper message to room %s: %s", room_id, e)
+
+        # ── Act 3: Reconciler delivers the analysis ──
+        ai_text = ""
+        ai_id = conflict.get("ai_suggested_fact_id")
+        if ai_id:
+            winner_fact = a if ai_id == a["id"] else b
+            ai_text = (
+                f"\n**🤖 Recommandation IA:**\n"
+                f"- Fait suggéré: Fact {ai_id} ({winner_fact['object']})\n"
+                f"- Raison: {conflict.get('ai_reason', 'N/A')}\n"
+            )
+        else:
+            ai_text = "\n**🤖 Recommandation IA:** Analyse non disponible (LLM non configuré)\n"
+
+        reconciler_msg = (
+            f"🧠 **[Reconciler Agent]** Analyse terminée.\n\n"
+            f"**Conflit #{conflict['conflict_id']}**\n"
+            f"- Sujet: {a['subject']}\n"
+            f"- Prédicat: {a['predicate']}\n\n"
+            f"{ai_text}\n"
+            f"---\n"
+            f"👤 **À l'humain :** répondez naturellement pour résoudre.\n"
+            f"Ex: \"Prends le fait 2\", \"OK pour {b['object']}\", \"Version {a['source_id']}\"\n"
+            f"Ou CLI: `mesh resolve {conflict['conflict_id']} <fact_id>`"
+        )
+        try:
+            await self.band.post_message(room_id, reconciler_msg)
+        except BandError as e:
+            logger.error("Cannot post Reconciler message to room %s: %s", room_id, e)
 
     # ------------------------------------------------------------------
     # Band Webhook — push-based resolution
@@ -1040,11 +932,11 @@ class ReconcilerAgent(Agent):
     async def band_webhook(self, request: Request) -> JSONResponse:
         """Receive a webhook from Band when a user replies in a room.
 
-        Expects::
+        Uses LLM (via ``provider.chat_completion``) to understand natural
+        language resolution intent.  Falls back to regex when no LLM is
+        configured.
 
-            {"room_id": "...", "content": "resolve with fact 2 because pyproject.toml is authorititative"}
-
-        Parses natural-language resolution patterns and applies them.
+        Body: ``{"room_id": "...", "content": "Prends le fait 2"}``
         """
         try:
             body = await request.json()
@@ -1066,31 +958,112 @@ class ReconcilerAgent(Agent):
             )
 
         # Find conflicts by room_id
-        conflicts = self.store.conn.execute(
+        rows = self.store.conn.execute(
             "SELECT id, fact_a_id, fact_b_id FROM conflicts WHERE band_room_id=? AND status='open'",
             (room_id,),
         ).fetchall()
 
-        if not conflicts:
+        if not rows:
             logger.info("Band webhook: no open conflict for room %s", room_id)
             return JSONResponse({"status": "ignored", "reason": "no open conflict for this room"})
 
-        # Parse "resolve with fact <N>" pattern
+        conflict_id, fact_a_id, fact_b_id = rows[0]
+
+        # ── LLM-powered resolution ──
+        winner_id, reason = await self._parse_resolution_intent(
+            content, fact_a_id, fact_b_id
+        )
+
+        if winner_id is not None:
+            self.store.resolve(conflict_id, winner_id, reason=reason)
+            logger.info(
+                "Band webhook [LLM] resolved conflict %s → fact %d: %s",
+                conflict_id, winner_id, reason[:120],
+            )
+            return JSONResponse({
+                "status": "resolved",
+                "conflict_id": conflict_id,
+                "fact_id": winner_id,
+                "parser": "llm",
+            })
+
+        # ── Regex fallback ──
         match = re.search(r"resolve\s+with\s+fact\s+(\d+)", content, re.IGNORECASE)
         if not match:
-            return JSONResponse(
-                {
-                    "status": "unresolved",
-                    "message": "no 'resolve with fact <ID>' pattern found in message",
-                },
+            match = re.search(
+                r"(?:prends?|choisis?|garde?|ok\s+pour|fact|fait)\s+(\d+)",
+                content, re.IGNORECASE,
             )
+        if match:
+            fact_id = int(match.group(1))
+            self.store.resolve(conflict_id, fact_id, reason=content)
+            logger.info(
+                "Band webhook [regex] resolved conflict %s → fact %d", conflict_id, fact_id
+            )
+            return JSONResponse({
+                "status": "resolved",
+                "conflict_id": conflict_id,
+                "fact_id": fact_id,
+                "parser": "regex",
+            })
 
-        fact_id = int(match.group(1))
-        conflict_id = conflicts[0][0]
+        return JSONResponse(
+            {
+                "status": "unresolved",
+                "message": (
+                    "Impossible de déterminer le fait à choisir. "
+                    "Essayez: 'Prends le fait 1', 'OK pour le 2', "
+                    "'Garde la version docs-repo'."
+                ),
+            },
+        )
 
-        self.store.resolve(conflict_id, fact_id, reason=content)
-        logger.info("Band webhook resolved conflict %s → fact %d", conflict_id, fact_id)
-        return JSONResponse({"status": "resolved", "conflict_id": conflict_id, "fact_id": fact_id})
+    async def _parse_resolution_intent(
+        self, message: str, fact_a_id: int, fact_b_id: int
+    ) -> tuple[int | None, str]:
+        """Use LLM to extract the user's resolution intent from a natural language message.
+
+        Returns ``(winner_id, reason)`` where ``winner_id`` is ``None`` when
+        the LLM is unavailable or cannot determine a clear winner.
+        """
+        system = (
+            "Tu es un agent d'analyse de message de chat. "
+            "L'utilisateur repond a un conflit entre deux faits : "
+            f"Fait A (ID={fact_a_id}) et Fait B (ID={fact_b_id}). "
+            "Analyse sa reponse et retourne un JSON strict contenant :\n"
+            '- "winner_id": entier (l\'ID du fait choisi, ou null si aucun choix clair)\n'
+            '- "reason": string (explication concise de son choix)\n\n'
+            "Exemples de reponses utilisateur et leur parsing :\n"
+            f'- "Prends la version de la doc" -> {{"winner_id": <id doc>, "reason": "utilisateur prefere la source documentation"}}\n'
+            '- "ok pour le fait 2" -> {"winner_id": 2, "reason": "choisit explicitement le fait 2"}\n'
+            '- "ignore le premier" -> {"winner_id": <fact_b_id>, "reason": "veut ignorer le premier fait (A)"}\n'
+            '- "garde FastAPI" -> {"winner_id": <id fastapi>, "reason": "choisit la valeur FastAPI"}\n'
+            "Retourne uniquement du JSON brut - pas de markdown, pas de code fences."
+        )
+
+        raw = await provider.chat_completion(
+            system, message,
+            temperature=0.0,
+            max_tokens=200,
+            parse_json=True,
+        )
+
+        if not isinstance(raw, dict):
+            return None, "LLM response was not a dict"
+
+        winner_id = raw.get("winner_id")
+        if winner_id is None:
+            return None, "LLM could not determine winner"
+
+        try:
+            wid = int(winner_id)
+        except (ValueError, TypeError):
+            return None, f"LLM returned invalid winner_id: {winner_id!r}"
+
+        if wid not in (fact_a_id, fact_b_id):
+            return None, f"LLM returned winner_id {wid} not in ({fact_a_id}, {fact_b_id})"
+
+        return wid, str(raw.get("reason", message))
 
     # ------------------------------------------------------------------
     # Health checks

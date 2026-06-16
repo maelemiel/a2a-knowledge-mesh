@@ -33,7 +33,8 @@ class RegistryStore:
 
     def __init__(self, db_path: str = str(DB_PATH)) -> None:
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(db_path, timeout=10)
+        self.conn = sqlite3.connect(db_path, timeout=10, check_same_thread=False)
+        self.conn.execute("PRAGMA foreign_keys=ON")
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA busy_timeout=5000")
         self.conn.execute("PRAGMA synchronous=NORMAL")
