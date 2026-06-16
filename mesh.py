@@ -10,10 +10,14 @@ Usage:
   mesh detect                      Scan for conflicts
   mesh resolve <key> <store>       Resolve a conflict
   mesh status                      Show system health
+  mesh ingest                      Run ingestion scrapers
   mesh watch [interval_sec]        Auto-scan conflicts every N seconds
   mesh help                        Show this message
 """
 
+from __future__ import annotations
+
+import asyncio
 import json
 import sys
 import time
@@ -22,22 +26,49 @@ from http.client import HTTPConnection
 DEFAULT_PORTS = {"registry": 8765, "keeper": 8766, "reconciler": 8767}
 
 
+# ---------------------------------------------------------------------------
+# Auth-aware A2A caller
+# ---------------------------------------------------------------------------
+
+_MASTER_TOKEN: str | None = None
+
+
+def _load_master_token() -> None:
+    global _MASTER_TOKEN
+    import os
+    _MASTER_TOKEN = os.getenv("A2A_MASTER_TOKEN") or os.getenv("A2A_REGISTRY_TOKEN")
+
+
 def _a2a(port: int, method: str, params: dict | None = None) -> dict:
-    """Make a JSON-RPC 2.0 call to an agent."""
+    """Make a JSON-RPC 2.0 call to an agent, with optional auth."""
+    if _MASTER_TOKEN is None:
+        _load_master_token()
+
     payload = json.dumps({
         "jsonrpc": "2.0",
         "id": 1,
         "method": method,
         "params": params or {},
     })
+
+    headers = {"Content-Type": "application/json"}
+    if _MASTER_TOKEN:
+        headers["Authorization"] = f"Bearer {_MASTER_TOKEN}"
+
     conn = HTTPConnection("localhost", port, timeout=5)
-    conn.request("POST", "/a2a", body=payload, headers={"Content-Type": "application/json"})
+    conn.request("POST", "/a2a", body=payload, headers=headers)
     resp = conn.getresponse()
     data = json.loads(resp.read())
     conn.close()
+
     if "error" in data:
         return {"error": data["error"]}
     return data.get("result", {})
+
+
+# ---------------------------------------------------------------------------
+# Commands
+# ---------------------------------------------------------------------------
 
 
 def _parse_store(raw: str) -> dict:
@@ -85,6 +116,9 @@ def cmd_detect() -> None:
     print(f"Conflicts: {len(conflicts)}")
     for c in conflicts:
         print(f"  {c.get('conflict_id')}: {c.get('subject')} ({c.get('predicate')})")
+        if c.get("ai_suggested_fact_id"):
+            print(f"    💡 AI Recommends: Fact ID {c.get('ai_suggested_fact_id')}")
+            print(f"       Reason: {c.get('ai_reason')}")
 
 
 def cmd_resolve(conflict_id: str, resolution_fact_id: str) -> None:
@@ -100,6 +134,7 @@ def cmd_resolve(conflict_id: str, resolution_fact_id: str) -> None:
 
 
 def cmd_status() -> None:
+    print("Agent Health:")
     for name, port in DEFAULT_PORTS.items():
         try:
             conn = HTTPConnection("localhost", port, timeout=2)
@@ -108,14 +143,58 @@ def cmd_status() -> None:
             conn.close()
             skills = card.get("skills", [])
             print(f"  ✅ {name} (port {port}) — {', '.join(skills)}")
+
+            # Also check /health for enriched status
+            conn = HTTPConnection("localhost", port, timeout=2)
+            conn.request("GET", "/health")
+            health = json.loads(conn.getresponse().read())
+            conn.close()
+            if health.get("checks"):
+                for c in health["checks"]:
+                    icon = "UP" if c.get("status") == "UP" else "DOWN"
+                    print(f"     ├─ {icon} {c['name']}: {c.get('detail', '')}")
         except Exception as e:
             print(f"  ❌ {name} (port {port}) — {e}")
+
+    # Active Conflicts from Reconciler
+    try:
+        result = _a2a(DEFAULT_PORTS["reconciler"], "status")
+        open_conflicts = result.get("open", [])
+        if open_conflicts:
+            print(f"\nOpen Conflicts ({len(open_conflicts)}):")
+            for c in open_conflicts:
+                print(f"  [{c.get('conflict_id')}] {c.get('subject')} ({c.get('predicate')})")
+                if c.get("ai_suggested_fact_id"):
+                    print(f"    💡 AI Recommends: Fact ID {c.get('ai_suggested_fact_id')}")
+                    print(f"       Reason: {c.get('ai_reason')}")
+    except Exception:
+        pass
 
 
 def cmd_start() -> None:
     from agents.runner import run_all
     run_all()
     print("Agents started. Use 'mesh status' to verify.")
+
+
+def cmd_ingest() -> None:
+    """Run ingestion scrapers against the Keeper."""
+    import os
+    if not os.getenv("A2A_MASTER_TOKEN") and not os.getenv("A2A_KEEPER_TOKEN"):
+        print("⚠ No auth token set. Set A2A_MASTER_TOKEN or A2A_KEEPER_TOKEN.")
+
+    async def _run():
+        from agents.ingester import ingest_all
+        result = await ingest_all(
+            f"http://localhost:{DEFAULT_PORTS['keeper']}",
+            project_dir=".",
+            target_role="keeper",
+        )
+        print(json.dumps(result, indent=2))
+        total = sum(result.values())
+        print(f"✅ Ingestion complete: {total} facts sent")
+
+    asyncio.run(_run())
 
 
 def cmd_watch(interval: str = "10") -> None:
@@ -150,6 +229,7 @@ def main() -> None:
         "detect": lambda: cmd_detect(),
         "resolve": lambda: cmd_resolve(args[0] if len(args) > 0 else "", args[1] if len(args) > 1 else ""),
         "status": lambda: cmd_status(),
+        "ingest": lambda: cmd_ingest(),
         "watch": lambda: cmd_watch(args[0] if args else "10"),
         "help": lambda: cmd_help(),
     }

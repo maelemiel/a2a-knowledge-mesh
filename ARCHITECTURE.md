@@ -120,17 +120,13 @@ CREATE TABLE conflicts (
     resolution_fact_id INTEGER,
     resolution_reason TEXT,
     created_at INTEGER NOT NULL,
-    resolved_at INTEGER
+    resolved_at INTEGER,
+    ai_suggested_fact_id INTEGER,
+    ai_reason TEXT
 );
 
-CREATE TABLE reconciliations (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    conflict_id TEXT NOT NULL REFERENCES conflicts(id),
-    resolved_by TEXT NOT NULL,    -- agent id or 'human'
-    resolution TEXT NOT NULL,     -- fact_a | fact_b | new
-    reason TEXT,
-    timestamp INTEGER NOT NULL
-);
+CREATE INDEX idx_conflicts_status ON conflicts(status);
+CREATE INDEX idx_conflicts_subject ON conflicts(subject);
 ```
 
 ## Communication Flow
@@ -152,9 +148,13 @@ POST /a2a                          → JSON-RPC call (method + params)
   "url": "http://localhost:8765",
   "skills": ["discover", "register", "list"],
   "version": "1.0.0",
-  "authentication": null
+  "authentication": {"schemes": [{"type": "bearer"}]}
 }
 ```
+
+> In production, ``authentication`` is a dict describing the auth scheme.
+> Agents may also publish a ``publicKey`` (PEM-encoded Ed25519/ECDSA) for
+> cryptographic identity verification across the mesh.
 
 **RPC call shape:**
 ```json

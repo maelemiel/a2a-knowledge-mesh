@@ -1,8 +1,9 @@
-"""Runner — launch all 3 agents or a single one."""
+"""Runner — launch all 3 agents or a single one with auth."""
 
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import signal
 import subprocess
@@ -28,7 +29,13 @@ def run_single(agent_name: str) -> None:
 
 
 def run_all() -> None:
-    """Launch 3 agents as subprocesses in the same terminal group."""
+    """Launch 3 agents as subprocesses in the same terminal group.
+
+    Each agent picks up its bearer token from the environment:
+    - Registry  → ``A2A_REGISTRY_TOKEN``
+    - Keeper    → ``A2A_KEEPER_TOKEN``
+    - Reconciler → ``A2A_RECONCILER_TOKEN``
+    """
     root = Path(__file__).parent.parent
     procs: list[subprocess.Popen] = []
 
@@ -45,6 +52,20 @@ def run_all() -> None:
     signal.signal(signal.SIGINT, cleanup)
     signal.signal(signal.SIGTERM, cleanup)
 
+    # Validate env
+    missing_tokens = []
+    for role in ("registry", "keeper", "reconciler"):
+        env_var = f"A2A_{role.upper()}_TOKEN"
+        if not os.getenv(env_var):
+            missing_tokens.append(env_var)
+    if missing_tokens:
+        print(
+            f"⚠ Missing auth tokens: {', '.join(missing_tokens)}\n"
+            "  Agents will start but non-public endpoints require tokens.\n"
+            "  Set them in .env or export before running.",
+            file=sys.stderr,
+        )
+
     for name in ["registry", "keeper", "reconciler"]:
         p = subprocess.Popen(
             [sys.executable, "-m", f"agents.{name}"],
@@ -57,9 +78,10 @@ def run_all() -> None:
 
     try:
         for p in procs:
-            for line in p.stdout:  # type: ignore
-                sys.stdout.buffer.write(line)
-                sys.stdout.buffer.flush()
+            if p.stdout:
+                for line in p.stdout:
+                    sys.stdout.buffer.write(line)
+                    sys.stdout.buffer.flush()
     except KeyboardInterrupt:
         cleanup()
 
@@ -72,6 +94,8 @@ def main() -> None:
         help="Run a single agent (default: all 3)",
     )
     args = parser.parse_args()
+
+    logging.basicConfig(level=logging.INFO)
 
     if args.agent:
         run_single(args.agent)

@@ -11,9 +11,9 @@
   "name": "Registry Agent",
   "description": "Directory service for A2A agents",
   "url": "http://localhost:8765",
-  "skills": ["discover", "register", "list"],
+  "skills": ["discover", "register", "list", "unregister"],
   "version": "1.0.0",
-  "authentication": null
+  "authentication": {"schemes": [{"type": "bearer"}]}
 }
 ```
 
@@ -24,9 +24,9 @@
   "name": "Keeper Agent",
   "description": "Structured knowledge store with source tracking",
   "url": "http://localhost:8766",
-  "skills": ["store-fact", "recall", "list-facts"],
+  "skills": ["store-fact", "store-facts-batch", "recall", "list-facts", "detect-conflicts", "get-fact"],
   "version": "1.0.0",
-  "authentication": null
+  "authentication": {"schemes": [{"type": "bearer"}]}
 }
 ```
 
@@ -37,9 +37,9 @@
   "name": "Reconciler Agent",
   "description": "Detects contradictory facts and resolves them via Band",
   "url": "http://localhost:8767",
-  "skills": ["detect-conflict", "resolve", "status"],
+  "skills": ["detect-conflict", "resolve", "status", "open-conflicts"],
   "version": "1.0.0",
-  "authentication": null
+  "authentication": {"schemes": [{"type": "bearer"}]}
 }
 ```
 
@@ -57,17 +57,23 @@
 
 | Method | Params | Returns |
 |--------|--------|---------|
-| `store-fact` | `{subject, predicate, object, source_id, source_url?}` | `{id, subject, predicate, object}` |
+| `store-fact` | `{subject, predicate, object, source_id?, source_url?}` | `{id, subject, predicate, object}` |
+| `store-facts-batch` | `{facts: [{subject, predicate, object, source_id?, source_url?}]}` | `{facts: [{id, subject, predicate, object}]}` |
 | `recall` | `{subject?, source_id?}` | `{facts: [{id, subject, predicate, object, source_id, source_url, timestamp, version}]}` |
 | `list-facts` | `{limit?, offset?}` | `{facts: [...]}` |
+| `detect-conflicts` | `{limit?, offset?}` | `{conflicts: [{subject, predicate, fact_a_id, fact_b_id, source_a, source_b, ...}]}` |
+| `get-fact` | `{id}` | `{fact: {...}}` |
+
+Conflict detection is handled server-side via SQL JOIN — no O(n²) memory scan.
 
 ### Reconciler
 
 | Method | Params | Returns |
 |--------|--------|---------|
-| `detect-conflict` | `{keeper_url?}` | `{conflicts: [{conflict_id, subject, predicate}], count}` |
+| `detect-conflict` | `{keeper_url?}` | `{conflicts: [{conflict_id, subject, predicate, ai_suggested_fact_id, ai_reason}], count}` |
 | `resolve` | `{conflict_id, resolution_fact_id, reason?}` | `{conflict_id, status}` |
 | `status` | `{}` | `{open: [...], all: [...]}` |
+| `open-conflicts` | `{}` | `{conflicts: [...]}` |
 
 ## Data Contracts
 
@@ -105,10 +111,15 @@
 Every agent exposes:
 
 ```
-GET  /.well-known/agent-card.json  → Agent Card (agent metadata + skills)
-GET  /health                        → {"status": "ok", "agent": "..."}
-POST /a2a                           → JSON-RPC 2.0 (method dispatch)
+GET  /.well-known/agent-card.json  → Agent Card (agent metadata + skills, auth scheme)
+GET  /health                        → {"status": "UP|DEGRADED", "agent": "...", "checks": [...]}
+POST /a2a                           → JSON-RPC 2.0 (method dispatch, requires bearer auth)
+POST /band-webhook                  → [Reconciler only] Push resolution from Band
 ```
+
+All non-public endpoints require a bearer token in the ``Authorization`` header.
+Tokens are configured via environment variables (``A2A_REGISTRY_TOKEN``,
+``A2A_KEEPER_TOKEN``, ``A2A_RECONCILER_TOKEN``, or ``A2A_MASTER_TOKEN``).
 
 The `/a2a` endpoint accepts:
 ```json
@@ -129,14 +140,17 @@ And returns:
 }
 ```
 
-Errors return HTTP 400/500 with:
-```json
-{
-  "jsonrpc": "2.0",
-  "id": "req-001",
-  "error": {"code": -32000, "message": "..."}
-}
-```
+Errors return spec-compliant codes:
+
+| HTTP Status | JSON-RPC Code | Meaning |
+|-------------|---------------|---------|
+| 400 | -32700 | Parse error (invalid JSON) |
+| 400 | -32600 | Invalid Request (missing `method`, wrong `jsonrpc`) |
+| 404 | -32601 | Method not found |
+| 422 | -32602 | Invalid params (type/validation error) |
+| 500 | -32603 | Internal error |
+| 401 | -32001 | Missing auth token |
+| 403 | -32003 | Invalid or expired token |
 
 ## Health Checks
 
