@@ -109,6 +109,31 @@ class ReconcilerStore:
             "ai_reason": ai_reason,
         }
 
+    def get_conflict_for_pair(self, fact_a_id: int, fact_b_id: int) -> dict | None:
+        row = self.conn.execute(
+            """
+            SELECT id, subject, predicate, status
+            FROM conflicts
+            WHERE
+                (fact_a_id = ? AND fact_b_id = ?)
+                OR
+                (fact_a_id = ? AND fact_b_id = ?)
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (fact_a_id, fact_b_id, fact_b_id, fact_a_id),
+        ).fetchone()
+
+        if not row:
+            return None
+
+        return {
+            "conflict_id": row[0],
+            "subject": row[1],
+            "predicate": row[2],
+            "status": row[3],
+        }
+
     def resolve(self, conflict_id: str, resolution_fact_id: int, reason: str) -> dict:
         ts = int(time.time())
         self.conn.execute(
