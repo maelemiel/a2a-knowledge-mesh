@@ -73,6 +73,9 @@ PUBLIC_PATHS: frozenset[str] = frozenset(
     {
         "/health",
         "/.well-known/agent-card.json",
+        "/dashboard",
+        "/api/dashboard/data",
+        "/api/dashboard/resolve",
     }
 )
 

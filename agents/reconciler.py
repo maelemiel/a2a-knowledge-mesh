@@ -755,6 +755,9 @@ class ReconcilerAgent(Agent):
         from starlette.routing import Route
 
         self._starlette.routes.append(Route("/band-webhook", self.band_webhook, methods=["POST"]))
+        self._starlette.routes.append(Route("/dashboard", self.dashboard_page, methods=["GET"]))
+        self._starlette.routes.append(Route("/api/dashboard/data", self.dashboard_data, methods=["GET"]))
+        self._starlette.routes.append(Route("/api/dashboard/resolve", self.dashboard_resolve, methods=["POST"]))
 
     # ------------------------------------------------------------------
     # RPC dispatcher
@@ -924,6 +927,81 @@ class ReconcilerAgent(Agent):
             await self.band.post_message(room_id, reconciler_msg)
         except BandError as e:
             logger.error("Cannot post Reconciler message to room %s: %s", room_id, e)
+
+    # ------------------------------------------------------------------
+    # Web Dashboard Endpoints
+    # ------------------------------------------------------------------
+
+    async def dashboard_page(self, request: Request) -> HTMLResponse:
+        """Serve the visual interactive Web Dashboard."""
+        from starlette.responses import HTMLResponse
+        return HTMLResponse(DASHBOARD_HTML)
+
+    async def dashboard_data(self, request: Request) -> JSONResponse:
+        """Provide dynamic facts, conflicts, and registry info for the dashboard."""
+        from starlette.responses import JSONResponse
+        from agents.auth import a2a_call
+        
+        conflicts = self.store.get_all()
+        
+        try:
+            facts_res = await a2a_call(
+                self.keeper_url,
+                "list-facts",
+                {"limit": 1000},
+                target_role="keeper",
+                timeout=10.0
+            )
+            facts = facts_res.get("facts", [])
+        except Exception as e:
+            logger.error("Dashboard failed to retrieve facts from Keeper: %s", e)
+            facts = []
+
+        try:
+            registry_res = await a2a_call(
+                "http://localhost:8765",
+                "list",
+                {},
+                target_role="registry",
+                timeout=10.0
+            )
+            registry_agents = registry_res.get("agents", [])
+        except Exception as e:
+            logger.error("Dashboard failed to retrieve agents from Registry: %s", e)
+            registry_agents = []
+
+        return JSONResponse({
+            "conflicts": conflicts,
+            "facts": facts,
+            "registry_agents": registry_agents,
+            "ports": {
+                "registry": 8765,
+                "keeper": 8766,
+                "reconciler": 8767
+            }
+        })
+
+    async def dashboard_resolve(self, request: Request) -> JSONResponse:
+        """Resolve a conflict immediately from the dashboard interface."""
+        from starlette.responses import JSONResponse
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+
+        conflict_id = body.get("conflict_id")
+        winner_fact_id = body.get("winner_fact_id")
+        reason = body.get("reason", "Resolved manually via Web Dashboard")
+
+        if not conflict_id or winner_fact_id is None:
+            return JSONResponse({"error": "conflict_id and winner_fact_id are required"}, status_code=422)
+
+        try:
+            result = self.store.resolve(conflict_id, int(winner_fact_id), reason=reason)
+            return JSONResponse({"status": "success", "result": result})
+        except Exception as e:
+            logger.error("Failed to resolve conflict from dashboard: %s", e)
+            return JSONResponse({"error": str(e)}, status_code=500)
 
     # ------------------------------------------------------------------
     # Band Webhook — push-based resolution
@@ -1096,8 +1174,897 @@ class ReconcilerAgent(Agent):
             await self.band.aclose()
 
 
+
+# ------------------------------------------------------------------
+# Web Dashboard HTML Template (Futuristic Neo-Brutalist / Dark Mode)
+# ------------------------------------------------------------------
+
+DASHBOARD_HTML = """<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>A2A Knowledge Mesh — Dashboard</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap');
+        
+        :root {
+            --bg-dark: #07080c;
+            --card-bg: rgba(17, 19, 28, 0.75);
+            --card-bg-hover: rgba(26, 29, 43, 0.85);
+            --border-color: rgba(255, 255, 255, 0.05);
+            --border-hover: rgba(255, 255, 255, 0.1);
+            --text-primary: #ffffff;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            
+            --accent-cyan: #00f2fe;
+            --accent-green: #39ff14;
+            --accent-purple: #a259ff;
+            --accent-danger: #ff3b30;
+            --accent-success: #10b981;
+            
+            --shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.5);
+            --glow-cyan: 0 0 15px rgba(0, 242, 254, 0.2);
+            --glow-purple: 0 0 15px rgba(162, 89, 255, 0.2);
+            --glow-green: 0 0 15px rgba(57, 255, 20, 0.2);
+            --glow-danger: 0 0 15px rgba(255, 59, 48, 0.2);
+        }
+        
+        * {
+            box-sizing: border-box;
+        }
+        
+        body {
+            background-color: var(--bg-dark);
+            color: var(--text-primary);
+            font-family: 'Outfit', sans-serif;
+            margin: 0;
+            padding: 0;
+            min-height: 100vh;
+            background-image: 
+                radial-gradient(circle at 10% 20%, rgba(0, 242, 254, 0.04) 0%, transparent 40%),
+                radial-gradient(circle at 90% 80%, rgba(162, 89, 255, 0.04) 0%, transparent 40%);
+            background-attachment: fixed;
+        }
+        
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 20px 40px;
+            border-bottom: 1px solid var(--border-color);
+            background: rgba(7, 8, 12, 0.8);
+            backdrop-filter: blur(8px);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+        
+        .logo-container {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .logo-icon {
+            width: 32px;
+            height: 32px;
+            fill: none;
+            stroke: var(--accent-purple);
+            stroke-width: 2.5;
+            filter: drop-shadow(0 0 8px var(--accent-purple));
+        }
+        
+        h1 {
+            font-size: 22px;
+            font-weight: 600;
+            margin: 0;
+            letter-spacing: -0.5px;
+            background: linear-gradient(135deg, #fff 0%, #a259ff 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        
+        .status-badge {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: rgba(16, 185, 129, 0.1);
+            border: 1px solid rgba(16, 185, 129, 0.2);
+            color: var(--accent-success);
+            padding: 6px 14px;
+            border-radius: 99px;
+            font-size: 13px;
+            font-weight: 500;
+        }
+        
+        .pulse {
+            width: 8px;
+            height: 8px;
+            background-color: var(--accent-success);
+            border-radius: 50%;
+            animation: pulse-animation 2s infinite;
+        }
+        
+        @keyframes pulse-animation {
+            0% {
+                transform: scale(0.95);
+                box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
+            }
+            70% {
+                transform: scale(1);
+                box-shadow: 0 0 0 6px rgba(16, 185, 129, 0);
+            }
+            100% {
+                transform: scale(0.95);
+                box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+            }
+        }
+        
+        main {
+            max-width: 1400px;
+            margin: 30px auto;
+            padding: 0 30px;
+            display: grid;
+            grid-template-columns: 320px 1fr;
+            gap: 30px;
+        }
+        
+        .sidebar {
+            display: flex;
+            flex-direction: column;
+            gap: 30px;
+        }
+        
+        .content-panel {
+            display: flex;
+            flex-direction: column;
+            gap: 30px;
+        }
+        
+        .card {
+            background: var(--card-bg);
+            backdrop-filter: blur(12px);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            padding: 24px;
+            box-shadow: var(--shadow);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        
+        .card:hover {
+            border-color: var(--border-hover);
+        }
+        
+        .card-title {
+            font-size: 16px;
+            font-weight: 600;
+            margin-top: 0;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            border-left: 3px solid var(--accent-purple);
+            padding-left: 10px;
+        }
+        
+        .registry-title { border-color: var(--accent-cyan); }
+        .keeper-title { border-color: var(--accent-green); }
+        
+        /* Agent Node Graph */
+        .node-detail {
+            margin-top: 15px;
+            font-size: 13px;
+            background: rgba(0, 0, 0, 0.2);
+            padding: 12px;
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+            line-height: 1.4;
+        }
+        
+        /* Agent Grid */
+        .agent-list {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        
+        .agent-item {
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            padding: 12px;
+            font-size: 13px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .agent-info {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        
+        .agent-name {
+            font-weight: 600;
+        }
+        
+        .agent-skills {
+            font-size: 11px;
+            color: var(--text-secondary);
+        }
+        
+        /* Conflict Stream */
+        .conflict-stream {
+            display: flex;
+            flex-direction: column;
+            gap: 24px;
+        }
+        
+        .conflict-card {
+            border-radius: 16px;
+            overflow: hidden;
+            border: 1px solid var(--border-color);
+            background: var(--card-bg);
+            box-shadow: var(--shadow);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        
+        .conflict-card:hover {
+            border-color: rgba(255, 255, 255, 0.08);
+        }
+        
+        .conflict-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 18px 24px;
+            background: rgba(255, 255, 255, 0.02);
+            border-bottom: 1px solid var(--border-color);
+        }
+        
+        .conflict-meta {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .badge-conflict {
+            background: rgba(255, 59, 48, 0.1);
+            color: var(--accent-danger);
+            border: 1px solid rgba(255, 59, 48, 0.2);
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .badge-resolved {
+            background: rgba(16, 185, 129, 0.1);
+            color: var(--accent-success);
+            border: 1px solid rgba(16, 185, 129, 0.2);
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .conflict-subject {
+            font-weight: 600;
+            font-size: 15px;
+        }
+        
+        .conflict-predicate {
+            color: var(--text-secondary);
+            font-size: 15px;
+        }
+        
+        .conflict-body {
+            padding: 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+        
+        .comparison-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        
+        .fact-panel {
+            background: rgba(0, 0, 0, 0.2);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 16px;
+            position: relative;
+        }
+        
+        .fact-panel.selected {
+            border-color: var(--accent-success);
+            background: rgba(16, 185, 129, 0.02);
+        }
+        
+        .fact-panel.suggested {
+            border-color: var(--accent-purple);
+            background: rgba(162, 89, 255, 0.02);
+        }
+        
+        .fact-source {
+            font-size: 11px;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            font-weight: 600;
+            margin-bottom: 8px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .fact-source-badge {
+            background: rgba(255, 255, 255, 0.05);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 10px;
+        }
+        
+        .fact-value {
+            font-size: 18px;
+            font-weight: 700;
+            color: #fff;
+            word-break: break-all;
+        }
+        
+        .fact-url {
+            font-size: 11px;
+            color: var(--accent-cyan);
+            text-decoration: none;
+            margin-top: 10px;
+            display: inline-block;
+            word-break: break-all;
+        }
+        
+        .fact-url:hover {
+            text-decoration: underline;
+        }
+        
+        /* AI Suggestion Card */
+        .ai-suggestion {
+            background: linear-gradient(135deg, rgba(162, 89, 255, 0.05) 0%, rgba(0, 242, 254, 0.02) 100%);
+            border: 1px dashed var(--accent-purple);
+            border-radius: 12px;
+            padding: 16px;
+            display: flex;
+            align-items: flex-start;
+            gap: 14px;
+            box-shadow: var(--glow-purple);
+        }
+        
+        .ai-icon-bg {
+            background: var(--accent-purple);
+            padding: 8px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #fff;
+            filter: drop-shadow(0 0 6px var(--accent-purple));
+        }
+        
+        .ai-content {
+            font-size: 13px;
+        }
+        
+        .ai-title {
+            font-weight: 600;
+            color: var(--accent-purple);
+            margin-bottom: 4px;
+            font-size: 14px;
+        }
+        
+        .ai-reason {
+            color: var(--text-secondary);
+            line-height: 1.5;
+        }
+        
+        /* Resolution actions */
+        .resolution-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 12px;
+            border-top: 1px solid var(--border-color);
+            padding-top: 18px;
+        }
+        
+        .btn {
+            font-family: inherit;
+            padding: 10px 18px;
+            border-radius: 8px;
+            font-weight: 500;
+            font-size: 13px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .btn-outline {
+            background: transparent;
+            border: 1px solid var(--border-color);
+            color: #fff;
+        }
+        
+        .btn-outline:hover {
+            background: rgba(255, 255, 255, 0.05);
+            border-color: var(--border-hover);
+        }
+        
+        .btn-primary {
+            background: var(--accent-purple);
+            border: 1px solid var(--accent-purple);
+            color: #fff;
+            box-shadow: var(--glow-purple);
+        }
+        
+        .btn-primary:hover {
+            background: #8b3ef7;
+            box-shadow: 0 0 20px rgba(162, 89, 255, 0.4);
+        }
+        
+        .resolution-summary {
+            background: rgba(16, 185, 129, 0.05);
+            border: 1px solid rgba(16, 185, 129, 0.2);
+            border-radius: 8px;
+            padding: 12px 18px;
+            font-size: 13px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            color: var(--accent-success);
+            width: 100%;
+        }
+        
+        /* Facts Table */
+        .facts-explorer {
+            grid-column: span 2;
+        }
+        
+        .table-container {
+            overflow-x: auto;
+            border-radius: 10px;
+            border: 1px solid var(--border-color);
+            background: rgba(0, 0, 0, 0.2);
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+            text-align: left;
+        }
+        
+        th {
+            background: rgba(255, 255, 255, 0.02);
+            padding: 14px 18px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            border-bottom: 1px solid var(--border-color);
+        }
+        
+        td {
+            padding: 14px 18px;
+            border-bottom: 1px solid var(--border-color);
+            color: var(--text-primary);
+        }
+        
+        tr:last-child td {
+            border-bottom: none;
+        }
+        
+        tr:hover td {
+            background: rgba(255, 255, 255, 0.01);
+        }
+        
+        .search-bar {
+            width: 100%;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 10px 14px;
+            color: #fff;
+            font-family: inherit;
+            font-size: 13px;
+            margin-bottom: 16px;
+            outline: none;
+            transition: all 0.2s ease;
+        }
+        
+        .search-bar:focus {
+            border-color: var(--accent-purple);
+            background: rgba(255, 255, 255, 0.05);
+        }
+        
+        .empty-state {
+            padding: 40px;
+            text-align: center;
+            color: var(--text-muted);
+            font-size: 14px;
+        }
+
+        @keyframes dash {
+            to {
+                stroke-dashoffset: -40;
+            }
+        }
+        .pulse-flow {
+            animation: dash 2s linear infinite;
+        }
+        .node-g {
+            cursor: pointer;
+            transition: transform 0.2s ease;
+        }
+        .node-g:hover {
+            transform: scale(1.08);
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="logo-container">
+            <svg class="logo-icon" viewBox="0 0 24 24">
+                <polygon points="12 2 2 22 22 22" />
+                <circle cx="12" cy="10" r="2" fill="currentColor" />
+            </svg>
+            <div>
+                <h1>A2A Knowledge Mesh</h1>
+                <div style="font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-top: 2px;">Coordination Layer & Reconciler</div>
+            </div>
+        </div>
+        <div class="status-badge">
+            <div class="pulse"></div>
+            Mesh actif (Band coord.)
+        </div>
+    </header>
+    
+    <main>
+        <div class="sidebar">
+            <div class="card">
+                <h3 class="card-title">Topologie A2A</h3>
+                <svg width="100%" height="220" viewBox="0 0 300 220" style="background: rgba(0,0,0,0.15); border-radius: 10px; border: 1px solid var(--border-color);">
+                    <path id="flow-r-k" d="M 150 40 L 70 160" stroke="rgba(255,255,255,0.06)" stroke-width="2" fill="none" />
+                    <path id="flow-k-rc" d="M 70 160 L 230 160" stroke="rgba(255,255,255,0.06)" stroke-width="2" fill="none" />
+                    <path id="flow-rc-r" d="M 230 160 L 150 40" stroke="rgba(255,255,255,0.06)" stroke-width="2" fill="none" />
+                    
+                    <path id="pulse-r-k" d="M 150 40 L 70 160" stroke="var(--accent-cyan)" stroke-width="2" stroke-dasharray="6 6" fill="none" class="pulse-flow" />
+                    <path id="pulse-k-rc" d="M 70 160 L 230 160" stroke="var(--accent-green)" stroke-width="2" stroke-dasharray="6 6" fill="none" class="pulse-flow" />
+                    <path id="pulse-rc-r" d="M 230 160 L 150 40" stroke="var(--accent-purple)" stroke-width="2" stroke-dasharray="6 6" fill="none" class="pulse-flow" />
+                    
+                    <circle cx="150" cy="40" r="16" fill="transparent" stroke="var(--accent-cyan)" stroke-width="1" stroke-dasharray="2 2" />
+                    <circle cx="70" cy="160" r="16" fill="transparent" stroke="var(--accent-green)" stroke-width="1" stroke-dasharray="2 2" />
+                    <circle cx="230" cy="160" r="16" fill="transparent" stroke="var(--accent-purple)" stroke-width="1" stroke-dasharray="2 2" />
+                    
+                    <g class="node-g" onclick="selectNode('registry')">
+                        <circle cx="150" cy="40" r="14" fill="#0c0e16" stroke="var(--accent-cyan)" stroke-width="2" />
+                        <text x="150" y="43" text-anchor="middle" fill="#fff" font-size="8" font-weight="600">REG</text>
+                    </g>
+                    <g class="node-g" onclick="selectNode('keeper')">
+                        <circle cx="70" cy="160" r="14" fill="#0c0e16" stroke="var(--accent-green)" stroke-width="2" />
+                        <text x="70" y="163" text-anchor="middle" fill="#fff" font-size="8" font-weight="600">KEEP</text>
+                    </g>
+                    <g class="node-g" onclick="selectNode('reconciler')">
+                        <circle cx="230" cy="160" r="14" fill="#0c0e16" stroke="var(--accent-purple)" stroke-width="2" />
+                        <text x="230" y="163" text-anchor="middle" fill="#fff" font-size="8" font-weight="600">RECON</text>
+                    </g>
+                </svg>
+                <div id="node-details" class="node-detail">
+                    Cliquez sur un agent pour voir sa carte de compétences.
+                </div>
+            </div>
+            
+            <div class="card">
+                <h3 class="card-title registry-title">Annuaire Registry</h3>
+                <div class="agent-list" id="registry-agents-list">
+                </div>
+            </div>
+        </div>
+        
+        <div class="content-panel">
+            <div class="card">
+                <h3 class="card-title">Flux des Contradictions</h3>
+                <div class="conflict-stream" id="conflicts-stream-list">
+                </div>
+            </div>
+        </div>
+        
+        <div class="card facts-explorer">
+            <h3 class="card-title keeper-title">Explorateur des Faits Ingestés (Keeper)</h3>
+            <input type="text" id="facts-search" class="search-bar" placeholder="Rechercher par sujet ou prédicat..." oninput="filterFacts()">
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th style="width: 80px;">ID</th>
+                            <th>Sujet</th>
+                            <th>Prédicat</th>
+                            <th>Valeur</th>
+                            <th>Source</th>
+                            <th>Timestamp</th>
+                        </tr>
+                    </thead>
+                    <tbody id="facts-table-body">
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        let cachedData = {};
+        const agentDetails = {
+            registry: {
+                name: "Registry Agent",
+                port: 8765,
+                desc: "Découverte et enregistrement d'agents autonomes. Publie /.well-known/agent-card.json."
+            },
+            keeper: {
+                name: "Keeper Agent",
+                port: 8766,
+                desc: "Base de faits RDF-lite décentralisée. Détection des conflits via SQL JOIN indexé."
+            },
+            reconciler: {
+                name: "Reconciler Agent",
+                port: 8767,
+                desc: "Orchestrateur de résolution. Interroge Featherless/OpenAI, notifie les salons Band et reçoit les webhooks."
+            }
+        };
+
+        function selectNode(agentKey) {
+            const details = agentDetails[agentKey];
+            const div = document.getElementById('node-details');
+            div.innerHTML = `
+                <div style="font-weight: 600; color: #fff; margin-bottom: 4px;">\${details.name}</div>
+                <div style="font-size: 11px; margin-bottom: 6px; color: var(--text-muted)">Port local: \${details.port}</div>
+                <div style="line-height: 1.4">\${details.desc}</div>
+            `;
+        }
+
+        async function fetchData() {
+            try {
+                const res = await fetch('/api/dashboard/data');
+                const data = await res.json();
+                cachedData = data;
+                
+                updateRegistryAgents(data.registry_agents);
+                updateConflicts(data.conflicts, data.facts);
+                updateFactsTable(data.facts);
+                updateTopologyVisuals(data.conflicts);
+            } catch (err) {
+                console.error("Failed to fetch dashboard data:", err);
+            }
+        }
+
+        function updateTopologyVisuals(conflicts) {
+            const hasOpen = conflicts.some(c => c.status === 'open');
+            const pulseLine = document.getElementById('pulse-k-rc');
+            if (pulseLine) {
+                if (hasOpen) {
+                    pulseLine.setAttribute('stroke', 'var(--accent-danger)');
+                    pulseLine.style.animationDuration = '0.8s';
+                } else {
+                    pulseLine.setAttribute('stroke', 'var(--accent-green)');
+                    pulseLine.style.animationDuration = '2s';
+                }
+            }
+        }
+
+        function updateRegistryAgents(agents) {
+            const list = document.getElementById('registry-agents-list');
+            if (!agents || agents.length === 0) {
+                list.innerHTML = \`<div class="empty-state">Aucun agent enregistré</div>\`;
+                return;
+            }
+            
+            list.innerHTML = agents.map(a => \`
+                <div class="agent-item">
+                    <div class="agent-info">
+                        <div class="agent-name">\${a.agent_id}</div>
+                        <div class="agent-skills">\${a.skills.join(', ')}</div>
+                    </div>
+                    <div style="font-size: 11px; color: var(--accent-cyan); background: rgba(0, 242, 254, 0.05); padding: 2px 6px; border-radius: 4px; border: 1px solid rgba(0, 242, 254, 0.1)">
+                        \${a.port}
+                    </div>
+                </div>
+            \`).join('');
+        }
+
+        function updateConflicts(conflicts, facts) {
+            const list = document.getElementById('conflicts-stream-list');
+            if (!conflicts || conflicts.length === 0) {
+                list.innerHTML = \`<div class="empty-state">Aucune contradiction détectée en base</div>\`;
+                return;
+            }
+
+            const factsMap = {};
+            facts.forEach(f => {
+                factsMap[f.id] = f;
+            });
+
+            list.innerHTML = conflicts.map(c => {
+                const factA = factsMap[c.fact_a_id] || { object: 'Indisponible', source_id: c.source_a || 'Inconnu' };
+                const factB = factsMap[c.fact_b_id] || { object: 'Indisponible', source_id: c.source_b || 'Inconnu' };
+                const isResolved = c.status === 'resolved';
+
+                let aiRecommendHtml = '';
+                if (c.ai_suggested_fact_id) {
+                    const aiWinner = c.ai_suggested_fact_id === c.fact_a_id ? factA : factB;
+                    aiRecommendHtml = \`
+                        <div class="ai-suggestion">
+                            <div class="ai-icon-bg">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M12 2a10 10 0 0 1 10 10c0 5.523-4.477 10-10 10S2 17.523 2 12A10 10 0 0 1 12 2z"/>
+                                    <path d="M12 6v6l4 2"/>
+                                </svg>
+                            </div>
+                            <div class="ai-content">
+                                <div class="ai-title">Suggestion de l'IA</div>
+                                <div class="ai-reason">
+                                    Fait suggéré: <strong>Fact #\${c.ai_suggested_fact_id} (\${aiWinner.object})</strong><br>
+                                    <span style="font-size: 11px; margin-top: 4px; display: inline-block;">Raison: \${c.ai_reason || 'Aucune raison donnée.'}</span>
+                                </div>
+                            </div>
+                        </div>
+                    \`;
+                }
+
+                let actionHtml = '';
+                if (!isResolved) {
+                    actionHtml = \`
+                        <div class="resolution-actions">
+                            <button class="btn btn-outline" onclick="resolveConflict('\${c.conflict_id}', \${c.fact_a_id}, 'Choix manuel de la version fact A')">
+                                Choisir Fact #\${c.fact_a_id}
+                            </button>
+                            <button class="btn btn-outline" onclick="resolveConflict('\${c.conflict_id}', \${c.fact_b_id}, 'Choix manuel de la version fact B')">
+                                Choisir Fact #\${c.fact_b_id}
+                            </button>
+                            \${c.ai_suggested_fact_id ? \`
+                                <button class="btn btn-primary" onclick="resolveConflict('\${c.conflict_id}', \${c.ai_suggested_fact_id}, 'Acceptation de la recommandation de l\\\\\\'IA')">
+                                    Accepter la suggestion IA
+                                </button>
+                            \` : ''}
+                        </div>
+                    \`;
+                } else {
+                    actionHtml = \`
+                        <div class="resolution-summary">
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+                                    <polyline points="20 6 9 17 4 12" />
+                                </svg>
+                                <span>Gagnant résolu : <strong>Fact #\${c.resolution_fact_id}</strong></span>
+                            </div>
+                            <div style="font-size: 11px; opacity: 0.8;">
+                                Raison : \${c.resolution_reason || 'N/A'}
+                            </div>
+                        </div>
+                    \`;
+                }
+
+                return \`
+                    <div class="conflict-card">
+                        <div class="conflict-header">
+                            <div class="conflict-meta">
+                                <span class="\${isResolved ? 'badge-resolved' : 'badge-conflict'}">\${c.status}</span>
+                                <div>
+                                    <span class="conflict-subject">\${c.subject}</span>
+                                    <span class="conflict-predicate"> / \${c.predicate}</span>
+                                </div>
+                            </div>
+                            <div style="font-size: 11px; color: var(--text-muted);">
+                                ID: \${c.conflict_id}
+                            </div>
+                        </div>
+                        <div class="conflict-body">
+                            <div class="comparison-grid">
+                                <div class="fact-panel \${isResolved && c.resolution_fact_id === c.fact_a_id ? 'selected' : ''} \${!isResolved && c.ai_suggested_fact_id === c.fact_a_id ? 'suggested' : ''}">
+                                    <div class="fact-source">
+                                        <span>Fact #\${c.fact_a_id}</span>
+                                        <span class="fact-source-badge">\${factA.source_id}</span>
+                                    </div>
+                                    <div class="fact-value">\${factA.object}</div>
+                                    \${factA.source_url ? \`<a href="\${factA.source_url}" target="_blank" class="fact-url">\${factA.source_url.split('/').pop()}</a>\` : ''}
+                                </div>
+                                <div class="fact-panel \${isResolved && c.resolution_fact_id === c.fact_b_id ? 'selected' : ''} \dots \${!isResolved && c.ai_suggested_fact_id === c.fact_b_id ? 'suggested' : ''}">
+                                    <div class="fact-source">
+                                        <span>Fact #\${c.fact_b_id}</span>
+                                        <span class="fact-source-badge">\${factB.source_id}</span>
+                                    </div>
+                                    <div class="fact-value">\${factB.object}</div>
+                                    \${factB.source_url ? \`<a href="\${factB.source_url}" target="_blank" class="fact-url">\${factB.source_url.split('/').pop()}</a>\` : ''}
+                                </div>
+                            </div>
+                            
+                            \${aiRecommendHtml}
+                            
+                            \${actionHtml}
+                        </div>
+                    </div>
+                \`;
+            }).join('');
+        }
+
+        function updateFactsTable(facts) {
+            window.allFacts = facts;
+            filterFacts();
+        }
+
+        function filterFacts() {
+            const query = document.getElementById('facts-search').value.toLowerCase();
+            const body = document.getElementById('facts-table-body');
+            const facts = window.allFacts || [];
+            
+            const filtered = facts.filter(f => 
+                f.subject.toLowerCase().includes(query) || 
+                f.predicate.toLowerCase().includes(query) ||
+                f.object.toLowerCase().includes(query)
+            );
+            
+            if (filtered.length === 0) {
+                body.innerHTML = \`<tr><td colspan="6" class="empty-state">Aucun fait correspondant en base</td></tr>\`;
+                return;
+            }
+
+            body.innerHTML = filtered.map(f => \`
+                <tr>
+                    <td style="font-weight: 600; color: var(--accent-cyan);">#\${f.id}</td>
+                    <td style="font-weight: 500;">\${f.subject}</td>
+                    <td><span style="background: rgba(255,255,255,0.03); padding: 2px 6px; border-radius: 4px; font-size: 11px;">\${f.predicate}</span></td>
+                    <td style="font-weight: 600; color: #fff;">\${f.object}</td>
+                    <td><span class="fact-source-badge">\${f.source_id}</span></td>
+                    <td style="color: var(--text-muted); font-size: 11px;">\${new Date(f.timestamp * 1000).toLocaleString()}</td>
+                </tr>
+            \`).join('');
+        }
+
+        async function resolveConflict(conflictId, winnerFactId, reason) {
+            try {
+                const res = await fetch('/api/dashboard/resolve', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        conflict_id: conflictId,
+                        winner_fact_id: winnerFactId,
+                        reason: reason
+                    })
+                });
+                const result = await res.json();
+                if (result.status === 'success') {
+                    fetchData();
+                } else {
+                    alert('Erreur: ' + result.error);
+                }
+            } catch (err) {
+                alert('Erreur lors de la résolution du conflit.');
+            }
+        }
+
+        fetchData();
+        setInterval(fetchData, 3000);
+    </script>
+</body>
+</html>
+"""
+
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     band_id = os.getenv("BAND_AGENT_ID")
     band_key = os.getenv("BAND_API_KEY")
     ReconcilerAgent(band_agent_id=band_id, band_api_key=band_key).run()
+
