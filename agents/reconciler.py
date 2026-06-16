@@ -58,6 +58,31 @@ class ReconcilerStore:
         self.conn.commit()
         return {"conflict_id": conflict_id, "subject": subject, "predicate": predicate}
 
+    def get_conflict_for_pair(self, fact_a_id: int, fact_b_id: int) -> dict | None:
+        row = self.conn.execute(
+            """
+            SELECT id, subject, predicate, status
+            FROM conflicts
+            WHERE
+                (fact_a_id = ? AND fact_b_id = ?)
+                OR
+                (fact_a_id = ? AND fact_b_id = ?)
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (fact_a_id, fact_b_id, fact_b_id, fact_a_id),
+        ).fetchone()
+
+        if not row:
+            return None
+
+        return {
+            "conflict_id": row[0],
+            "subject": row[1],
+            "predicate": row[2],
+            "status": row[3],
+        }
+
     def resolve(self, conflict_id: str, resolution_fact_id: int, reason: str) -> dict:
         ts = int(time.time())
         self.conn.execute(
@@ -194,6 +219,20 @@ class ReconcilerAgent(Agent):
                         continue
                     if a["object"] == b["object"]:
                         continue
+
+                    existing = self.store.get_conflict_for_pair(a["id"], b["id"])
+
+                    if existing and existing["status"] == "resolved":
+                        continue
+
+                    if existing and existing["status"] == "open":
+                        created.append({
+                            "conflict_id": existing["conflict_id"],
+                            "subject": existing["subject"],
+                            "predicate": existing["predicate"],
+                        })
+                        continue
+
                     conflict = self.store.create_conflict(
                         subject=a["subject"],
                         predicate=a["predicate"],
@@ -203,7 +242,6 @@ class ReconcilerAgent(Agent):
                         source_b=b["source_id"],
                     )
                     created.append(conflict)
-
                     # Post to Band if configured
                     if self.band:
                         self._notify_band(a, b, conflict)
