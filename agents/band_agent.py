@@ -19,12 +19,16 @@ from __future__ import annotations
 
 import logging
 import os
+from pathlib import Path
 from typing import Any
 
 from band import Agent as BandAgentRunner
 from band.core.simple_adapter import SimpleAdapter
 from band.core.protocols import AgentToolsProtocol
 from band.core.types import PlatformMessage
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).parent.parent / ".env")
 
 logger = logging.getLogger(__name__)
 
@@ -46,11 +50,11 @@ class BandAgent(SimpleAdapter[Any]):
     agent_name: str = "agent"
     agent_description: str = "A2A Knowledge Mesh agent"
 
-    def __init__(self) -> None:
+    def __init__(self, agent_id: str | None = None, api_key: str | None = None) -> None:
         super().__init__()
         self._band_runner: BandAgentRunner | None = None
-        self._agent_id: str = ""
-        self._api_key: str = ""
+        self._agent_id = agent_id or ""
+        self._api_key = api_key or ""
 
     async def on_message(
         self,
@@ -66,6 +70,7 @@ class BandAgent(SimpleAdapter[Any]):
         """Called by the SDK when the agent receives a message.
 
         Delegates to ``handle_message()`` which subclasses override.
+        Auto-@mentions the sender in replies (required by Band).
         """
         logger.debug(
             "Message from %s in %s: %.80s",
@@ -76,6 +81,28 @@ class BandAgent(SimpleAdapter[Any]):
 
         if is_session_bootstrap:
             await self.on_bootstrap(room_id, tools)
+
+        # Wrap tools to auto-@mention the sender in every reply
+        sender = msg.sender_name
+        original_send = tools.send_message
+
+        async def _send(content: str, **kwargs: Any) -> Any:
+            mentions = kwargs.pop("mentions", None)
+            if not mentions and sender:
+                mentions = [sender]
+            return await original_send(content, mentions=mentions, **kwargs)
+
+        tools.send_message = _send  # type: ignore[method-assign]
+
+        # Strip leading @mentions from content before passing to handler
+        # (e.g. "@Keeper store ..." → "store ...")
+        raw = msg.content
+        parts = raw.split()
+        while parts and parts[0].startswith("@"):
+            parts.pop(0)
+        if parts != raw.split():
+            from dataclasses import replace
+            msg = replace(msg, content=" ".join(parts))
 
         await self.handle_message(msg, tools, room_id)
 
@@ -122,8 +149,8 @@ class BandAgent(SimpleAdapter[Any]):
 
         Call ``agent.run()`` to start the WebSocket connection.
         """
-        self._agent_id = agent_id or os.getenv("BAND_AGENT_ID", "")
-        self._api_key = api_key or os.getenv("BAND_API_KEY", "")
+        self._agent_id = agent_id or self._agent_id or os.getenv("BAND_AGENT_ID", "")
+        self._api_key = api_key or self._api_key or os.getenv("BAND_API_KEY", "")
 
         if not self._agent_id or not self._api_key:
             raise ValueError(
@@ -153,7 +180,7 @@ class BandAgent(SimpleAdapter[Any]):
         import asyncio
 
         runner = self.connect(agent_id, api_key, **kwargs)
-        asyncio.run(runner.run_forever())
+        asyncio.run(runner.run())
 
 
 # ---------------------------------------------------------------------------

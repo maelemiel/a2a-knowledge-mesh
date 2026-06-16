@@ -12,6 +12,7 @@ Commands:
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from band.core.protocols import AgentToolsProtocol
 from band.core.types import PlatformMessage
@@ -26,8 +27,8 @@ class RegistryAgent(BandAgent):
     agent_name = "Registry"
     agent_description = "Agent directory. Commands: register, discover, list"
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
         self.store = RegistryStore()
 
     async def handle_message(
@@ -113,4 +114,8 @@ def _parse_kv(text: str) -> dict[str, str]:
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    RegistryAgent().run()
+    import os
+    RegistryAgent(
+        agent_id=os.getenv("BAND_REGISTRY_ID", ""),
+        api_key=os.getenv("BAND_REGISTRY_KEY", ""),
+    ).run()

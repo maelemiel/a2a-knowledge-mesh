@@ -22,6 +22,10 @@ import sys
 import time
 from pathlib import Path
 
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).parent / ".env")
+
 ROOT = Path(__file__).parent
 DATA = ROOT / "data"
 
@@ -172,11 +176,17 @@ def cmd_send_via_band(content: str) -> None:
 
 
 def cmd_start() -> None:
-    """Launch all 3 Band agents as subprocesses."""
+    """Launch all 3 Band agents as subprocesses.
+
+    Each agent reads its own credentials from .env:
+      BAND_REGISTRY_ID/KEY  → registry_band
+      BAND_KEEPER_ID/KEY    → keeper_band
+      BAND_RECONCILER_ID/KEY → reconciler_band
+    """
     import subprocess
 
     missing = []
-    for var in ["BAND_AGENT_ID", "BAND_API_KEY"]:
+    for var in ["BAND_REGISTRY_ID", "BAND_KEEPER_ID", "BAND_RECONCILER_ID"]:
         if not os.getenv(var):
             missing.append(var)
     if missing:
@@ -184,8 +194,9 @@ def cmd_start() -> None:
         print("   Set them in .env before starting agents.")
         return
 
+    agent_names = ["registry_band", "keeper_band", "reconciler_band"]
     procs = []
-    for name in ["registry_band", "keeper_band", "reconciler_band"]:
+    for name in agent_names:
         p = subprocess.Popen(
             [sys.executable, "-m", f"agents.{name}"],
             cwd=ROOT,

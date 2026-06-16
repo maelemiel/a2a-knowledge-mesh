@@ -10,6 +10,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).parent.parent / ".env")
+
 
 def run_single(agent_name: str) -> None:
     if agent_name == "registry":

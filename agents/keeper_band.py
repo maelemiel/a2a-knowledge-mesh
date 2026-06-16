@@ -12,6 +12,7 @@ Stores facts in SQLite. Replies in the room.
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from band.core.protocols import AgentToolsProtocol
 from band.core.types import PlatformMessage
@@ -26,8 +27,8 @@ class KeeperAgent(BandAgent):
     agent_name = "Keeper"
     agent_description = "Structured fact store. Commands: store, recall, list, detect"
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
         self.store = KeeperStore()
 
     async def handle_message(
@@ -159,4 +160,8 @@ def _parse_kv(text: str) -> dict[str, str]:
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    KeeperAgent().run()
+    import os
+    KeeperAgent(
+        agent_id=os.getenv("BAND_KEEPER_ID", ""),
+        api_key=os.getenv("BAND_KEEPER_KEY", ""),
+    ).run()

@@ -15,6 +15,7 @@ import logging
 import os
 import sqlite3
 from pathlib import Path
+from typing import Any
 
 from band.core.protocols import AgentToolsProtocol
 from band.core.types import PlatformMessage
@@ -41,8 +42,8 @@ class ReconcilerAgent(BandAgent):
     agent_name = "Reconciler"
     agent_description = "Conflict resolver with AI suggestions. Commands: detect, status, resolve"
 
-    def __init__(self, keeper_db: str = "") -> None:
-        super().__init__()
+    def __init__(self, keeper_db: str = "", **kwargs: Any) -> None:
+        super().__init__(**kwargs)
         self.store = ReconcilerStore()
         self.store.migrate_schema()
         self.keeper_db_path = keeper_db or str(Path(__file__).parent.parent / "data" / "keeper.db")
@@ -311,4 +312,8 @@ class ReconcilerAgent(BandAgent):
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    ReconcilerAgent().run()
+    import os
+    ReconcilerAgent(
+        agent_id=os.getenv("BAND_RECONCILER_ID", ""),
+        api_key=os.getenv("BAND_RECONCILER_KEY", ""),
+    ).run()
