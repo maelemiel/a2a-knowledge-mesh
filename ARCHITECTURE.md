@@ -101,6 +101,7 @@ CREATE INDEX idx_facts_source ON facts(source_id);
 - Creates a Band room for each conflict
 - Posts conflict details with @mentions of relevant agents
 - Records resolution when an agent (or human) resolves it
+- Serves an interactive **Web Dashboard** at `/dashboard` (with public JSON endpoints at `/api/dashboard/*`) for real-time visualization and conflict resolution
 
 **Skills:**
 - `detect-conflict` — scan for contradictory facts

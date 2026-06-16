@@ -18,6 +18,7 @@ What sets us apart from passive sync solutions like Memory Store (YC P26): we do
 
 - **Active reconciliation** (not passive sync): we detect contradictions via SQL JOIN and resolve them via LLM
 - **3 agents collaborating in Band**: Registry → Keeper → Reconciler, all in the same Band rooms
+- **Interactive Web Dashboard**: served directly by the reconciler agent, featuring a live SVG network topology graph, side-by-side conflict comparisons, and active resolution buttons.
 - **Full provenance**: every fact tracks its source, every conflict has an AI suggestion, every resolution is recorded
 - **YC RFS alignment**: #5 Company Brain (shared agent knowledge) + #13 Software for Agents
 - **Stack**: Python, Band SDK, A2A Protocol, SQLite, Featherless AI, Pydantic

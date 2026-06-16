@@ -71,12 +71,10 @@
 ## 2:00 — 3:00 : Détection de Conflit + AI Suggestion (60 sec)
 
 ### Visuel
-- Terminal : `uv run python mesh.py detect`
-- Ou bande-annonce de la room Band : `@reconciler detect`
-- Les conflits s'affichent : "project-ALLY → framework = Next.js (source: docs) vs React (source: code repo)"
-- On voit l'appel LLM : petite animation "AI thinking..." avec une icône Featherless
-- La suggestion AI s'affiche : "✅ AI suggests React (fact #42) — Reason: pyproject.toml is the authoritative source for dependencies"
-- Les colonnes AI dans la base reconciler.db s'affichent
+- Navigateur : ouverture du Dashboard à `http://localhost:8767/dashboard`
+- Affichage de la topologie réseau A2A. Au lancement de `mesh.py detect`, la ligne reliant le Keeper et le Reconciler passe au **rouge** et pulse.
+- Le conflit s'affiche de manière fluide dans le flux : "project-ALLY → framework = Next.js vs FastAPI".
+- La carte de recommandation de l'IA s'illumine en violet avec le choix suggéré ("FastAPI") et l'explication de Qwen/Featherless.
 
 ### Audio (script voix)
 > **"On lance la détection. Le Reconciler lit la base du Keeper et cherche les paires contradictoires : même sujet, même propriété, valeurs différentes."**
@@ -94,10 +92,9 @@
 ## 3:00 — 3:30 : Résolution dans Band (30 sec)
 
 ### Visuel
-- Room Band : message du Reconciler qui @mentionne les agents sources
-- Un humain tape : `resolve conflict-abc123 42 pyproject.toml is authoritative`
-- La résolution s'affiche, le conflit passe en "résolu"
-- `mesh.py status` montre le conflit fermé
+- Démo double résolution :
+  1. **Option A (Humain dans Band)** : on montre le salon Band où l'utilisateur tape `@reconciler resolve conflict-xxx 2` pour forcer FastAPI.
+  2. **Option B (Un clic Dashboard)** : sur l'interface web, on clique sur le bouton violet "Accepter la suggestion IA" (ou "Choisir Fact #2"). La ligne de topologie repasse instantanément au **vert** et le statut du conflit passe à "resolved" avec un badge vert.
 
 ### Audio (script voix)
 > **"Un humain peut résoudre en un clic. Dans la room Band, il tape 'resolve', l'ID du conflit, et le gagnant."**

@@ -49,6 +49,17 @@ In another terminal, test the full flow:
 # E2E integration test (8 steps, uses auto-generated tokens)
 uv run python test_integration.py
 
+# Or use the Web Dashboard
+After starting the agents, open your browser and navigate to:
+[http://localhost:8767/dashboard](http://localhost:8767/dashboard)
+
+This dashboard provides a premium interactive interface featuring:
+- **Interactive SVG Topology Graph**: pulsing node flows indicating agent health and live conflict alerts.
+- **Side-by-Side Conflict Comparison**: direct visibility into Fact A (e.g., docs-repo) vs Fact B (e.g., code-repo) contradictions.
+- **AI Recommendation Engine**: clear view of the winner fact selected by the LLM along with its detailed reasoning.
+- **One-Click Resolvers**: instant manual or AI-driven conflict resolution.
+- **Ingested Fact Search**: live-filterable table explorer of all facts stored in the Keeper agent.
+
 # Or use the CLI
 uv run python mesh.py status
 uv run python mesh.py store subject=project-ALLY predicate=framework object=Next.js source=docs-repo
