@@ -370,5 +370,158 @@ class TestAuthAsync(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(client1.is_closed)
 
 
+class TestLlmProvider(unittest.IsolatedAsyncioTestCase):
+    """Test suite for the LLM Provider wrapper."""
+
+    def setUp(self):
+        self.old_env = dict(os.environ)
+
+    def tearDown(self):
+        os.environ.clear()
+        os.environ.update(self.old_env)
+
+    async def asyncTearDown(self):
+        from agents.provider import close_client
+        await close_client()
+
+    def test_resolve_config_featherless(self):
+        from agents.provider import resolve_config
+        os.environ.pop("FEATHERLESS_API_KEY", None)
+        os.environ.pop("FEATHERLESS_KEY", None)
+        os.environ.pop("OPENAI_API_KEY", None)
+
+        os.environ["FEATHERLESS_API_KEY"] = "key-f"
+        os.environ["FEATHERLESS_MODEL"] = "my-model-f"
+        config = resolve_config()
+        self.assertIsNotNone(config)
+        self.assertEqual(config.provider_name, "featherless")
+        self.assertEqual(config.api_key, "key-f")
+        self.assertEqual(config.model, "my-model-f")
+        self.assertIn("api.featherless.ai", config.base_url)
+
+    def test_resolve_config_openai(self):
+        from agents.provider import resolve_config
+        os.environ.pop("FEATHERLESS_API_KEY", None)
+        os.environ.pop("FEATHERLESS_KEY", None)
+        os.environ.pop("OPENAI_API_KEY", None)
+
+        os.environ["OPENAI_API_KEY"] = "key-o"
+        os.environ["OPENAI_MODEL"] = "my-model-o"
+        config = resolve_config()
+        self.assertIsNotNone(config)
+        self.assertEqual(config.provider_name, "openai")
+        self.assertEqual(config.api_key, "key-o")
+        self.assertEqual(config.model, "my-model-o")
+        self.assertIn("api.openai.com", config.base_url)
+
+    def test_resolve_config_none(self):
+        from agents.provider import resolve_config
+        os.environ.pop("FEATHERLESS_API_KEY", None)
+        os.environ.pop("FEATHERLESS_KEY", None)
+        os.environ.pop("OPENAI_API_KEY", None)
+
+        config = resolve_config()
+        self.assertIsNone(config)
+
+    async def test_client_lifecycle(self):
+        from agents.provider import _get_client, close_client
+        client = _get_client()
+        self.assertFalse(client.is_closed)
+        await close_client()
+        self.assertTrue(client.is_closed)
+
+    @unittest.mock.patch("agents.provider.resolve_config")
+    async def test_chat_completion_no_provider(self, mock_resolve):
+        mock_resolve.return_value = None
+        from agents.provider import provider
+        res = await provider.chat_completion("sys", "user")
+        self.assertIsNone(res)
+
+    @unittest.mock.patch("agents.provider._get_client")
+    async def test_chat_completion_success(self, mock_get_client):
+        mock_client = unittest.mock.AsyncMock()
+        mock_get_client.return_value = mock_client
+        mock_response = unittest.mock.MagicMock()
+        mock_response.json.return_value = {
+            "choices": [{"message": {"content": "Hello world"}}]
+        }
+        mock_client.post.return_value = mock_response
+
+        from agents.provider import Provider, ProviderConfig
+        config = ProviderConfig(api_key="key", base_url="http://mock", model="model")
+        p = Provider(max_retries=1)
+        res = await p.chat_completion("sys", "user", config=config)
+        self.assertEqual(res, "Hello world")
+
+    @unittest.mock.patch("agents.provider._get_client")
+    async def test_chat_completion_success_json(self, mock_get_client):
+        mock_client = unittest.mock.AsyncMock()
+        mock_get_client.return_value = mock_client
+        mock_response = unittest.mock.MagicMock()
+        mock_response.json.return_value = {
+            "choices": [{"message": {"content": '{"winner_id": 2}'}}]
+        }
+        mock_client.post.return_value = mock_response
+
+        from agents.provider import Provider, ProviderConfig
+        config = ProviderConfig(api_key="key", base_url="http://mock", model="model")
+        p = Provider(max_retries=1)
+        res = await p.chat_completion("sys", "user", config=config, parse_json=True)
+        self.assertEqual(res, {"winner_id": 2})
+
+    @unittest.mock.patch("asyncio.sleep")
+    @unittest.mock.patch("agents.provider._get_client")
+    async def test_chat_completion_failures_and_retries(self, mock_get_client, mock_sleep):
+        mock_client = unittest.mock.AsyncMock()
+        mock_get_client.return_value = mock_client
+        mock_client.post.side_effect = Exception("connection error")
+
+        from agents.provider import Provider, ProviderConfig
+        config = ProviderConfig(api_key="key", base_url="http://mock", model="model")
+        p = Provider(max_retries=3, retry_delay=0.1)
+        res = await p.chat_completion("sys", "user", config=config)
+        self.assertIsNone(res)
+        self.assertEqual(mock_client.post.call_count, 3)
+        mock_sleep.assert_called()
+
+    @unittest.mock.patch("agents.provider._get_client")
+    async def test_chat_completion_empty_choices(self, mock_get_client):
+        mock_client = unittest.mock.AsyncMock()
+        mock_get_client.return_value = mock_client
+        mock_response = unittest.mock.MagicMock()
+        mock_response.json.return_value = {"choices": []}
+        mock_client.post.return_value = mock_response
+
+        from agents.provider import Provider, ProviderConfig
+        config = ProviderConfig(api_key="key", base_url="http://mock", model="model")
+        p = Provider(max_retries=1)
+        res = await p.chat_completion("sys", "user", config=config)
+        self.assertIsNone(res)
+
+    def test_provider_resolve(self):
+        from agents.provider import Provider
+        os.environ["FEATHERLESS_API_KEY"] = "test-key"
+        p = Provider()
+        config = p.resolve()
+        self.assertIsNotNone(config)
+        self.assertEqual(config.api_key, "test-key")
+
+    @unittest.mock.patch("agents.provider._get_client")
+    async def test_chat_completion_unparseable_json(self, mock_get_client):
+        mock_client = unittest.mock.AsyncMock()
+        mock_get_client.return_value = mock_client
+        mock_response = unittest.mock.MagicMock()
+        mock_response.json.return_value = {
+            "choices": [{"message": {"content": "unparseable json content"}}]
+        }
+        mock_client.post.return_value = mock_response
+
+        from agents.provider import Provider, ProviderConfig
+        config = ProviderConfig(api_key="key", base_url="http://mock", model="model")
+        p = Provider(max_retries=1)
+        res = await p.chat_completion("sys", "user", config=config, parse_json=True)
+        self.assertIsNone(res)
+
+
 if __name__ == "__main__":
     unittest.main()
