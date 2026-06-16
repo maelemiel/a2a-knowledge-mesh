@@ -55,7 +55,7 @@ def _a2a(port: int, method: str, params: dict | None = None) -> dict:
     if _MASTER_TOKEN:
         headers["Authorization"] = f"Bearer {_MASTER_TOKEN}"
 
-    conn = HTTPConnection("localhost", port, timeout=5)
+    conn = HTTPConnection("localhost", port, timeout=50)
     conn.request("POST", "/a2a", body=payload, headers=headers)
     resp = conn.getresponse()
     data = json.loads(resp.read())

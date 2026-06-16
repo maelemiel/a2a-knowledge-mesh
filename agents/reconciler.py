@@ -192,7 +192,7 @@ class ReconcilerStore:
 # Band Client with retries + logging
 # ---------------------------------------------------------------------------
 
-BAND_API_BASE = "https://api.band.ai/v2"
+BAND_API_BASE = "https://app.band.ai/api/v1"
 
 
 class BandError(Exception):
@@ -200,90 +200,107 @@ class BandError(Exception):
 
 
 class BandClient:
-    """Resilient Band REST API client with retry + structured logging.
-
-    Uses ``httpx.AsyncClient`` throughout.
-    """
+    """Resilient Band REST API client with retry + structured logging."""
 
     def __init__(self, agent_id: str, api_key: str, *, max_retries: int = 3) -> None:
-        if not agent_id or not api_key:
-            raise ValueError("BAND_AGENT_ID and BAND_API_KEY must be set")
+        if not api_key:
+            raise ValueError("BAND_API_KEY must be set")
         self.agent_id = agent_id
         self.max_retries = max_retries
         self._client = httpx.AsyncClient(
             base_url=BAND_API_BASE,
             headers={
-                "Authorization": f"Bearer {api_key}",
+                "X-API-Key": api_key,
                 "Content-Type": "application/json",
             },
             timeout=httpx.Timeout(10.0, connect=5.0),
         )
 
-    async def create_room(self, title: str) -> dict:
-        """Create a room. Raises ``BandError`` on failure."""
-        for attempt in range(1, self.max_retries + 1):
-            try:
-                resp = await self._client.post(
-                    f"/agents/{self.agent_id}/rooms",
-                    json={"title": title},
-                )
-                if resp.is_success:
-                    data = resp.json()
-                    logger.info("Band room created: %s (title=%r)", data.get("id"), title)
-                    return data
+        async def create_room(self, title: str) -> dict:
+            """Create a Band chat room. Raises BandError on failure."""
+            for attempt in range(1, self.max_retries + 1):
+                try:
+                    resp = await self._client.post(
+                        "/agent/chats",
+                        json={
+                            "chat": {
+                                "title": title,
+                            }
+                        },
+                    )
 
-                logger.warning(
-                    "Band create_room attempt %d/%d: HTTP %d %s",
-                    attempt, self.max_retries, resp.status_code, resp.text[:200],
-                )
-                if resp.status_code == 429:
-                    await _exponential_backoff(attempt)
-                    continue
-                if resp.status_code >= 500:
-                    await _exponential_backoff(attempt)
-                    continue
+                    if resp.is_success:
+                        data = resp.json()
+                        room = data.get("data", data)
+                        logger.info("Band chat created: %s (title=%r)", room.get("id"), title)
+                        return room
 
-                msg = f"Band create_room failed: HTTP {resp.status_code} – {resp.text[:200]}"
-                raise BandError(msg)
+                    logger.warning(
+                        "Band create_room attempt %d/%d: HTTP %d %s",
+                        attempt,
+                        self.max_retries,
+                        resp.status_code,
+                        resp.text[:300],
+                    )
 
-            except httpx.TimeoutException:
-                logger.warning("Band create_room timeout attempt %d/%d", attempt, self.max_retries)
-                if attempt < self.max_retries:
-                    await _exponential_backoff(attempt)
-                    continue
-                raise BandError(f"Band create_room timeout after {self.max_retries} retries") from None
+                    if resp.status_code in (429, 500, 502, 503):
+                        await _exponential_backoff(attempt)
+                        continue
 
-        raise BandError("Band create_room exhausted retries")
+                    raise BandError(
+                        f"Band create_room failed: HTTP {resp.status_code} – {resp.text[:300]}"
+                    )
 
-    async def post_message(self, room_id: str, message: str) -> dict:
-        """Post a message to a room. Raises ``BandError`` on failure."""
-        for attempt in range(1, self.max_retries + 1):
-            try:
-                resp = await self._client.post(
-                    f"/agents/{self.agent_id}/rooms/{room_id}/messages",
-                    json={"content": message},
-                )
-                if resp.is_success:
-                    return resp.json()
+                except httpx.TimeoutException:
+                    logger.warning("Band create_room timeout attempt %d/%d", attempt, self.max_retries)
+                    if attempt < self.max_retries:
+                        await _exponential_backoff(attempt)
+                        continue
+                    raise BandError(f"Band create_room timeout after {self.max_retries} retries") from None
 
-                logger.warning(
-                    "Band post_message attempt %d/%d: HTTP %d",
-                    attempt, self.max_retries, resp.status_code,
-                )
-                if resp.status_code in (429, 500, 502, 503):
-                    await _exponential_backoff(attempt)
-                    continue
+            raise BandError("Band create_room exhausted retries")
 
-                raise BandError(f"Band post_message HTTP {resp.status_code}: {resp.text[:200]}")
+        async def post_message(self, room_id: str, message: str) -> dict:
+            """Post a conflict event to a Band chat room."""
+            for attempt in range(1, self.max_retries + 1):
+                try:
+                    resp = await self._client.post(
+                        f"/agent/chats/{room_id}/events",
+                        json={
+                            "event": {
+                                "content": message,
+                                "message_type": "task",
+                            }
+                        },
+                    )
 
-            except httpx.TimeoutException:
-                logger.warning("Band post_message timeout attempt %d/%d", attempt, self.max_retries)
-                if attempt < self.max_retries:
-                    await _exponential_backoff(attempt)
-                    continue
-                raise BandError(f"Band post_message timeout after {self.max_retries} retries") from None
+                    if resp.is_success:
+                        return resp.json()
 
-        raise BandError("Band post_message exhausted retries")
+                    logger.warning(
+                        "Band post_message attempt %d/%d: HTTP %d %s",
+                        attempt,
+                        self.max_retries,
+                        resp.status_code,
+                        resp.text[:300],
+                    )
+
+                    if resp.status_code in (429, 500, 502, 503):
+                        await _exponential_backoff(attempt)
+                        continue
+
+                    raise BandError(
+                        f"Band post_message HTTP {resp.status_code}: {resp.text[:300]}"
+                    )
+
+                except httpx.TimeoutException:
+                    logger.warning("Band post_message timeout attempt %d/%d", attempt, self.max_retries)
+                    if attempt < self.max_retries:
+                        await _exponential_backoff(attempt)
+                        continue
+                    raise BandError(f"Band post_message timeout after {self.max_retries} retries") from None
+
+            raise BandError("Band post_message exhausted retries")
 
     async def aclose(self) -> None:
         await self._client.aclose()
