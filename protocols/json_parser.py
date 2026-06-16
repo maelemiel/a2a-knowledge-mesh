@@ -43,8 +43,6 @@ def parse_llm_json(content: str) -> dict | list | None:
     try:
         import dirtyjson
         val = dirtyjson.loads(cleaned)
-        if hasattr(val, "to_python"):
-            return val.to_python()
         # convert to plain python dict/list if it's dirtyjson structures
         if isinstance(val, (dict, list)):
             return val
