@@ -1,186 +1,166 @@
-# Knowledge Mesh — Judge Demo Script
+# DEMO — A2A Knowledge Mesh
 
-A tight **3-minute** walkthrough. Every line in quotes is narration to say out
-loud; it names the Band primitive doing the work, because that is what the
-rubric rewards.
-
-> **Golden rule:** have the **offline path** running and proven *before* you go
-> live. If anything breaks, pivot to it without missing a beat — the visuals
-> are identical.
+> 5 min walkthrough for jury. Two paths: offline (zero deps) or live (Band).
+>
+> **Slides:** double-click `Knowledge_Mesh.pptx`
+> **Video:** `demo.mp4` in this repo
 
 ---
 
-## 0. One-time setup (before the room)
+## Path A — Offline Demo (3 min, no Band, no API keys)
+
+Best for dry run / travel / jury desk with no WiFi.
+
+### Step 1 — Setup
 
 ```bash
+git clone https://github.com/maelemiel/a2a-knowledge-mesh.git
+cd a2a-knowledge-mesh
 uv sync
+```
+
+### Step 2 — Launch quick demo
+
+```bash
+uv run python scripts/quick_demo.py
+```
+
+This does **everything** in one command:
+
+1. Creates a fresh SQLite database with 8 facts from 2 sources
+2. Detects 3 conflicts via SQL JOIN
+3. Runs AI resolution (if LLM key found) or creates human-review conflicts
+4. Launches dashboard on http://localhost:8766
+5. Opens your browser automatically
+
+You see:
+- **Facts:** 8 facts ingested from `docs-repo` and `code-repo`
+- **Conflicts:** 3 detected (framework, version, database are contradictory)
+- **Resolved:** AI-picked winners with explanations
+- **Agent list:** 4 registered agents with their skills
+- **Live timeline:** All events from the demo
+
+### Step 3 — Walk the jury through
+
+Point at each section:
+
+| Section | What to say |
+|---------|-------------|
+| **Cards** | "8 facts stored, 3 conflicts detected, 1 auto-resolved — real metrics from SQLite" |
+| **Timeline** | "Every action is logged with sender + timestamp — full audit trail" |
+| **Registered Agents** | "4 agents discovered each other via the Registry directory" |
+| **Cheatsheet** | "Each agent has a command syntax — humans talk to them via @mention in Band" |
+| **Reset button** | "One click wipes everything — fresh start for the next demo" |
+
+### Step 4 — Click Reset
+
+Shows the jury that resetting is instant. Then refresh to show the dashboard
+gracefully handles empty state.
+
+---
+
+## Path B — Live Demo (5 min, needs Band account + LLM key)
+
+### Setup
+
+```bash
 cp .env.example .env
-# fill in: 5 Band agent IDs + keys, Featherless API key, room ID
-```
-
-- One Featherless key powers all 4 LLM agents (~$0.05/run)
-- Start the dashboard in its own terminal and leave it up:
-
-```bash
-uv run python dashboard/server.py
-# → http://localhost:8766
-```
-
----
-
-## 1. The hook (20s)
-
-> "Enterprise knowledge is spread across code, documentation, Slack conversations,
-> and meeting notes. When two sources say different things — 'version 1.0.0'
-> versus 'version 0.9.0' — normally a human spends 30 minutes tracking down
-> which one is right. Watch 4 agents do it in under 30 seconds — coordinating
-> through Band, catching the contradiction automatically, and resolving it
-> without a human lifting a finger."
-
-Open the dashboard. It's the knowledge mesh: live timeline, fact counters,
-conflict tracking, all updating in real time.
-
----
-
-## 2. Live run in Band (90s)
-
-In a second terminal:
-
-```bash
+# Fill in: BAND_*_ID, BAND_*_KEY, BAND_ROOM_ID, BAND_USER_HANDLE
+# At least one LLM key (Featherless / OpenAI / AIML)
 bash scripts/run_mesh.sh
 ```
 
-Wait for all five "Agent started" lines. Open **app.band.ai** →
-room "Knowledge Mesh".
+Open dashboard → http://localhost:8766
+Open Band → your room with all 5 agents
 
-### Step 1 — Scraper ingests facts
+### Demo Script
 
-The Scraper scans a git repo and posts structured facts into the room:
-
-```
-Scraper: 🔍 Scanning project-audit-remediation...
-Scraper: ✅ Sent 47 facts to Keeper via store-batch
-```
-
-> "The Scraper is a **deterministic agent** — no LLM, just file parsing.
-> Band lets it post structured facts into the room that other agents
-> consume. **Without Band, this data would be locked inside a script
-> that no other agent can discover.**"
-
-### Step 2 — Keeper detects a conflict
-
-Keeper stores the facts in SQLite, then runs the conflict detection query:
+**1. List agents** — show that Registry works
 
 ```
-Keeper: ✅ stored fact #12: project-ally → version = 1.0.0 (from pyproject.toml)
-Keeper: ✅ stored fact #13: project-ally → version = 0.9.0 (from README.md)
-Keeper: ⚠️ 1 conflict detected:
-         project-ally → version: '1.0.0' (src:pyproject.toml) vs '0.9.0' (src:README.md)
-Keeper: @reconciler detect — 1 conflict
+@registry list
 ```
 
-> "Keeper runs a **SQL JOIN** — not an O(n²) memory scan — to find
-> contradictory facts from different sources. Then it @mentions the
-> Reconciler through Band. **Band routes the problem to the right
-> specialist agent, just like an @mention in a Slack channel.**"
+> Expected: agents appear in dashboard Registered Agents panel
 
-### Step 3 — Reconciler resolves with LLM
+**2. Store facts from 2 sources** — create the conflict
 
 ```
-Reconciler: 💡 AI: Fact #12 is correct
-            pyproject.toml is the authoritative source for package metadata
-            (confidence: 0.95, severity: LOW)
-Reconciler: ✅ Auto-resolved → conflict 'abc12345' → fact #12 wins
+@keeper store subject=project-ALLY predicate=framework object=Next.js source=docs-repo
+@keeper store subject=project-ALLY predicate=framework object=React source=code-repo
+@keeper store subject=project-ALLY predicate=version object=18.2 source=docs-repo
+@keeper store subject=project-ALLY predicate=version object=16.8 source=code-repo
+@keeper store subject=project-ALLY predicate=database object=PostgreSQL source=docs-repo
+@keeper store subject=project-ALLY predicate=database object=MongoDB source=code-repo
+@keeper store subject=project-ALLY predicate=language object=TypeScript source=docs-repo
+@keeper store subject=project-ALLY predicate=language object=TypeScript source=code-repo  # matching
 ```
 
-> "The Reconciler calls Featherless AI through our shared provider,
-> asks 'which fact is correct', and gets a confident answer. **The
-> LLM decision, the confidence score, and the auto-resolution all
-> happen inside the Band room — visible to every participant.**"
+> Expected: 8 facts stored. "language" has no conflict (both say TypeScript).
 
-### Step 4 — Dashboard shows the result
-
-Flip to http://localhost:8766:
-
-- **Messages counter** incremented
-- **Timeline** shows every step
-- **Conflicts** shows 1 resolved
-
-> "The Bridge agent — a sixth, deterministic agent — mirrors the
-> entire conversation to the dashboard via HTTP. **Every @mention,
-> every handoff, every resolution is visible in real time. Band
-> is not a black box; it's a transparent coordination layer.**"
-
-### (Bonus) Step 5 — Human in the loop
-
-Type in the Band room:
+**3. Detect conflicts**
 
 ```
-@keeper recall project-ally
+@keeper detect
 ```
 
-Keeper replies:
+or
 
 ```
-📋 47 facts:
-  #12 version = 1.0.0 (from pyproject.toml)
-  #13 version = 0.9.0 (from README.md, OVERRIDDEN by #12)
-  #14 dep-python = uvicorn>=0.34
-  ...
+@reconciler detect
 ```
 
-> "The human can query the fact store at any time. **Band keeps
-> the human as a first-class participant — not just a spectator,
-> but someone who can inspect, challenge, and override agent
-> decisions.**"
+> Expected: 3 conflicts found (framework, version, database). Each has
+> Fact A vs Fact B with sources.
+
+**4. Check status**
+
+```
+@reconciler status
+```
+
+> Expected: shows conflict IDs, subjects, statuses (open), AI suggestions
+
+**5. Resolve manually**
+
+```
+@reconciler resolve <conflict_id> <fact_id> docs-repo is the source of truth
+```
+
+Replace `<conflict_id>` and `<fact_id>` with actual values from `status`.
+
+> Expected: conflict moves to "resolved", dashboard counters update
+
+**6. Scan the repo**
+
+```
+@scraper scan self
+```
+
+> Expected: Scraper scans the project, extracts facts about the codebase,
+> sends them to Keeper. New facts appear in dashboard.
+
+**7. Dashboard walkthrough** — same as Path A Step 3
 
 ---
 
-## 3. The dashboard payoff (30s)
+## Troubleshooting
 
-Point at http://localhost:8766:
-
-- **Live Timeline** — every Band message in real time
-- **Fact count** — how many facts are stored
-- **Conflict count** — how many contradictions were found and resolved
-- **Bridge status** — shows the Bridge is connected
-
-> "The dashboard polls the Bridge agent every 2.5 seconds. **Without
-> Band, you'd need a message bus, a database, and a custom API to
-> replicate this — and you'd still lose the agent-to-agent
-> coordination.**"
+| Symptom | Fix |
+|---------|-----|
+| Agents not responding in Band | Check all 5 agents are added to the same room |
+| `cannot_mention_self` | Registry auto-registration disabled — normal |
+| Dashboard "Bridge offline" | Bridge agent not connected to Band yet (wait 5s) |
+| LLM resolution not running | No API key set — falls back to human-review mode |
+| Agents flood help text | You typed a bare @mention — fixed by empty-message guard |
 
 ---
 
-## 4. If credits / Wi-Fi / Band fail — the offline path
+## Pitch
 
-Everything above runs deterministically with **no API and no Band**:
+> "5 Band agents. Each does one thing: discover, store, reconcile, scan, bridge.
+> They find each other, coordinate through Band, and negotiate truth together.
+> When two sources disagree, SQL JOIN detects it, an LLM suggests a winner,
+> and a human decides in the chat room. Full audit trail, zero external infra."
 
-```bash
-uv run python scripts/run_offline_demo.py
-```
-
-Then refresh the dashboard. Run the other fixtures to show the system
-**discriminates**:
-
-| Fixture | Result |
-|---------|--------|
-| `fixtures/code_vs_doc.json` | 🔄 Conflict → auto-resolved (LOW) |
-| `fixtures/merge_conflict.json` | 🔄 Conflict → needs human (MEDIUM) |
-| `fixtures/stale_data.json` | 🔄 Conflict → auto-resolved (MEDIUM) |
-| `fixtures/clean_run.json` | ✅ No conflict |
-
-> "Four scenarios, four different outcomes. The same SQLite store,
-> the same conflict detection, the same resolution pipeline —
-> **Band is the nervous system that connects them, not the brain
-> that does the thinking.**"
-
----
-
-## One-liner if a judge asks "what's Band actually doing?"
-
-> "Band is the coordination layer: structured fact handoff between
-> agents, @mention routing to the right specialist, shared context
-> without shared memory, and a human-in-the-loop gate at every
-> resolution. **Strip Band out and you have 4 SQLite databases
-> that can't find or talk to each other.**"
+**YC RFS:** #5 Company Brain + #13 Software for Agents

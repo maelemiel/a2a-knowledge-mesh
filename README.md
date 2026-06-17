@@ -1,138 +1,171 @@
 # A2A Knowledge Mesh
 
-> 3 A2A agents that discover, store, and reconcile knowledge.
-> They find each other via A2A Agent Cards, coordinate through Band, and negotiate truth together.
+> 5 Band agents. One job each: discover, store, reconcile.
+> They run on your machine, talk through Band WebSocket, and negotiate truth together.
 
 **Hackathon:** Band of Agents (lablab.ai) — June 12–19, 2026
 **Track:** Internal Enterprise Workflows / Regulated & High-Stakes
-**Stack:** Python, A2A Protocol, Band API, SQLite, Pydantic
+**Stack:** Python, Band SDK, SQLite
 
-## Architecture
+## Concept
+
+When different agents store conflicting facts ("project X uses Python 3.13" vs "project X uses Node 22"), who's right? The mesh detects contradictions via SQL JOIN, asks an LLM to suggest a winner, and lets a human resolve it in Band.
 
 ```
-                  ┌──────────┐
-  CLI / test ────►│ Registry │  discover agents by skill
-                  ├──────────┤
-User ──► mesh CLI─►│  Keeper  │  store / recall / batch-insert facts
-                  ├──────────────┤
-                  │ Reconciler │  SQL conflict detection → AI suggestion → Band room → webhook
-                  └──────────────┘
+   ┌─────────┐  ┌──────────┐  ┌────────────┐  ┌──────────┐  ┌────────┐
+   │ Scraper │  │ Registry │  │  Keeper    │  │Reconciler│  │ Bridge │
+   │ (Band)  │  │ (Band)   │  │ (Band)     │  │ (Band)   │  │ (REST) │
+   └────┬────┘  └────┬─────┘  └─────┬──────┘  └────┬─────┘  └───┬────┘
+        │            │              │             │           │
+        └────────────┴──── Band WebSocket ────────┴───────────┘
+                                 │
+                              SQLite (data/*.db)
+                                 │
+                         Dashboard (stdlib HTTP)
 ```
 
-| Agent | Port | Skills |
-|-------|------|--------|
-| Registry | 8765 | discover, register, unregister, list |
-| Keeper | 8766 | store-fact, store-facts-batch, recall, list-facts, detect-conflicts, get-fact |
-| Reconciler | 8767 | detect-conflict, resolve, status, open-conflicts |
+| Agent | Role | Commands |
+|-------|------|----------|
+| **Scraper** | Scans local repos → extracts facts via LLM → sends to Keeper | `scan self`, `scan <path>`, `status` |
+| **Registry** | Directory of agents and their skills | `register`, `discover`, `list` |
+| **Keeper** | SQLite fact store, auto-detects conflicts on insert | `store`, `recall`, `list`, `detect` |
+| **Reconciler** | AI conflict analysis, scoring, auto-resolve | `detect`, `status`, `resolve` |
+| **Bridge** | Observes room messages, exposes REST API for dashboard | *(passive)* |
 
-## Quick Start
+## Quick Demo (30 seconds, no Band needed)
 
 ```bash
 git clone https://github.com/maelemiel/a2a-knowledge-mesh.git
 cd a2a-knowledge-mesh
 uv sync
 
-# Generate auth tokens & configure
-cp .env.example .env
-# Fill in: A2A_REGISTRY_TOKEN, A2A_KEEPER_TOKEN, A2A_RECONCILER_TOKEN
-# Generate with:  openssl rand -hex 32
-
-# Run all 3 agents
-uv run python -m agents.runner
-# Or via the CLI script entrypoint
-uv run mesh-runner
+# Generate a quick demo database with sample data
+uv run python scripts/quick_demo.py
 ```
 
-In another terminal, test the full flow:
+This creates fake facts in SQLite, detects a conflict, resolves it, and
+launches a standalone dashboard. Open http://localhost:8766 — no Band
+account, no API keys, no agents running.
+
+## Full Setup (with Band)
+
+### 1. Create Band agents
+
+1. Go to [app.band.ai](https://app.band.ai) → Settings → Agents → Create 5 **Remote Agents**:
+   - `scraper`, `keeper`, `reconciler`, `registry`, `bridge`
+2. Copy each agent's UUID + API key
+3. Create one **room** and add all 5 agents + yourself
+4. Copy the room ID
+
+### 2. Configure
 
 ```bash
-# All agents must be running with tokens set in environment
-
-# E2E integration test (8 steps, uses auto-generated tokens)
-uv run python test_integration.py
-
-# Or use the Web Dashboard
-After starting the agents, open your browser and navigate to:
-[http://localhost:8766/dashboard](http://localhost:8766/dashboard)
-
-This dashboard provides a premium interactive interface featuring:
-- **Interactive SVG Topology Graph**: pulsing node flows indicating agent health and live conflict alerts.
-- **Side-by-Side Conflict Comparison**: direct visibility into Fact A (e.g., docs-repo) vs Fact B (e.g., code-repo) contradictions.
-- **AI Recommendation Engine**: clear view of the winner fact selected by the LLM along with its detailed reasoning.
-- **One-Click Resolvers**: instant manual or AI-driven conflict resolution.
-- **Ingested Fact Search**: live-filterable table explorer of all facts stored in the Keeper agent.
-- **Real SQLite Metrics**: fact / conflict / resolution counts read directly from the databases — no heuristic parsing.
-- **Registered Agents Panel**: live directory of all agents registered in the mesh.
-- **Command Cheatsheet**: quick-reference table of every agent's commands.
-- **🗑 Reset Button**: one-click clear of all facts, conflicts, and registrations.
-
-# Or use the CLI
-uv run python mesh.py status
-uv run python mesh.py store subject=project-ALLY predicate=framework object=Next.js source=docs-repo
-uv run python mesh.py recall project-ALLY
-uv run python mesh.py detect
-uv run python mesh.py ingest     # auto-scrape pyproject.toml + .env.example
+cp .env.example .env
 ```
 
-**Expected output:** 8 steps — register → discover → store facts → recall → detect conflicts (SQL JOIN) → resolve → verify status → JSON-RPC error compliance.
+Edit `.env` — fill in:
+- `BAND_*_ID` + `BAND_*_KEY` for each of the 5 agents
+- `BAND_ROOM_ID` (the shared room)
+- `BAND_USER_HANDLE` (your Band handle, e.g. `mael2perso`)
+- At least one LLM key (Featherless or OpenAI)
 
-## Authentication
+> 💡 `run_mesh.sh` validates all required vars on startup and tells you
+> exactly which ones are missing.
 
-All agents use bearer token auth on `/a2a` endpoints. Tokens are set via env vars:
+### 3. Launch
 
-| Variable | Agent |
-|----------|-------|
-| `A2A_REGISTRY_TOKEN` | Registry |
-| `A2A_KEEPER_TOKEN` | Keeper |
-| `A2A_RECONCILER_TOKEN` | Reconciler |
-| `A2A_MASTER_TOKEN` | CLI / cross-agent fallback |
+```bash
+bash scripts/run_mesh.sh
+```
 
-Public endpoints (health, agent card) don't require auth.
+Opens:
+- **Dashboard** → http://localhost:8766 — live timeline + metrics + agents
+- **Band room** → type `@keeper list` to see agents responding
 
-## Demo Flow
+### 4. Try it in Band
 
-1. **Register** — Keeper agent registers with Registry (requires bearer token)
-2. **Discover** — Find Keeper by skill `store-fact`
-3. **Store** — Save facts from different sources (conflicting values)
-4. **Detect** — Reconciler calls Keeper's SQL JOIN `detect-conflicts`, gets contradictions, runs AI suggestion
-5. **Resolve** — Pick the winning fact, record the decision
-6. **Ingest** — Auto-scrape `pyproject.toml` / `.env.example` into facts
-7. **Band Webhook** — Push-based resolution when human replies in Band room
+```text
+@keeper store subject=project-ALLY predicate=framework object=Next.js source=docs-repo
+@keeper store subject=project-ALLY predicate=framework object=React source=code-repo
+@reconciler detect
+@reconciler status
+@scraper scan self
+```
 
-## Band Architecture
+## Offline Mode
 
-Agents connect to Band via WebSocket (`band-sdk` + `SimpleAdapter`). See [`agents/band_agent.py`](agents/band_agent.py) for the base class (`BandAgent`).
+No Band internet? No problem:
 
-**Mention routing:**
-- Robust `_strip_mentions()` handles multi-word display names with spaces and accents (e.g. `@Maël Perrigaud/scraper`).
-- Strips Band-encoded `@[[UUID]]` mentions and remaining `@word` prefixes before dispatching to handlers.
-- Agent-to-agent replies always mention the human user (not another agent) — prevents loops.
-- Uses `resolve_handle()` with a cascade: explicit env var → `{BAND_USER_HANDLE}/{agent_name}` → bare name.
+```bash
+uv run python scripts/quick_demo.py --serve
+```
 
-**Self-registration:**
-- On bootstrap in the HQ room, each agent auto-registers with the Registry via explicit `@mention`.
-- Registry does **not** self-register (Band rejects `cannot_mention_self`).
-- No more "en ligne" spam on connect.
+Same dashboard with pre-loaded facts and conflicts. Works anywhere.
+
+## Architecture
+
+Each agent is a Python `SimpleAdapter` connected to Band via WebSocket.
+They never expose HTTP — Band IS the mesh. The only HTTP processes are:
+
+- **Bridge** (port 8765) — REST API that mirrors room events for the dashboard
+- **Dashboard** (port 8766) — stdlib HTTP server serving index.html
+
+### Mention handling
+
+Band delivers messages with `@Display Name` or `@[[UUID]]` prefixes.
+The base class (`BandAgent`) strips all leading mentions before dispatching
+commands — so `@Maël Perrigaud/scraper scan self` becomes `scan self`.
+
+### Agent-to-agent routing
+
+When an agent needs another agent, it @mentions them explicitly. Replies
+always mention the human user to prevent infinite agent↔agent loops.
+
+### Self-registration
+
+On joining the HQ room, each agent auto-registers with Registry via @mention.
+Registry does not self-register (Band rejects `cannot_mention_self`).
 
 ## Key Features
 
-- **SQL JOIN conflict detection** — O(n log n) instead of O(n²) in-memory scan
-- **Pydantic validation** — All RPC params validated with strict types
-- **JSON-RPC 2.0 spec** — Proper error codes (-32700, -32601, -32602, -32603), `jsonrpc` field validation
-- **ASGI auth middleware** — Bearer token per role, master token fallback
-- **Async I/O** — httpx.AsyncClient throughout, Band retries with exponential backoff
-- **Resilient LLM parser** — Handles markdown fences, trailing commas, truncated JSON
-- **Ingestion scraper** — Extensible `Scraper` ABC with built-in pyproject.toml/.env scrapers
-- **Health checks** — Dependency-aware probes (DB, peer agents, Band)
+- **SQL JOIN conflict detection** — O(n log n), reads facts grouped by
+  (subject, predicate) with COUNT(DISTINCT object) > 1
+- **LLM-powered resolution** — Reconciler asks the LLM to pick a winner
+  and explain why
+- **Mention stripping** — Seamless handling of Unicode names with spaces
+- **Dashboard** — Live SQLite metrics, agent directory, command cheatsheet,
+  one-click reset
+- **Resilient** — Stale replay dedup (15s grace), anti-loop protection,
+  empty-message guard
 
-## Docs
+## Project Structure
 
-- [ARCHITECTURE.md](ARCHITECTURE.md) — Stack, agents, port map, data model, DB schemas
-- [DESIGN.md](DESIGN.md) — Agent cards, RPC method signatures, contracts, error codes
-
-## Spikes
-
-Feasibility spikes in [`spikes/`](spikes/) validated each technology before building the real agents.
+```
+├── agents/
+│   ├── band_agent.py          # Base class (BandAgent)
+│   ├── bridge_agent.py        # REST bridge for dashboard
+│   ├── keeper_band.py         # Keeper Band agent
+│   ├── keeper.py              # KeeperStore (SQLite schema)
+│   ├── reconciler_band.py     # Reconciler Band agent
+│   ├── reconciler.py          # ReconcilerStore + conflict engine
+│   ├── registry_band.py       # Registry Band agent
+│   ├── registry.py            # RegistryStore
+│   ├── scraper_band.py        # Scraper Band agent
+│   ├── scraper_service.py     # LLM-based repo scanning
+│   ├── provider.py            # LLM provider abstraction
+│   └── auth.py                # HMAC signing, token validation
+├── dashboard/
+│   ├── server.py              # stdlib HTTP server
+│   └── index.html             # Dashboard UI
+├── data/                      # SQLite databases (gitignored)
+├── scripts/
+│   ├── run_mesh.sh            # Launch all 5 agents + dashboard
+│   └── quick_demo.py          # 30-second demo, no Band needed
+├── spikes/                    # Feasibility prototypes
+├── mesh.py                    # CLI for DB queries
+├── DEMO.md                    # Demo script for jury
+└── README.md
+```
 
 ## YC RFS Alignment
 
@@ -141,9 +174,6 @@ Touches 2 YC Requests for Startups (Summer 2026):
 - **#5 Company Brain** (Tom Blomfield) — shared knowledge layer for agents
 - **#13 Software for Agents** (Aaron Epstein) — agent-native infrastructure
 
-**Competing solution:** Memory Store (YC P26) does passive sync (Slack/Gmail → memory). We do active reconciliation (A2A discovery → SQL conflict detection → Band resolution).
-
-## Tech Partners
-
-- **AI/ML API** — $10 credits for LLM-powered resolution suggestions
-- **Featherless AI** — $25 credits (code `BOA26`), flat-rate open-source inference
+**Competing solution:** Memory Store (YC P26) does passive sync
+(Slack/Gmail → memory). We do active reconciliation (A2A discovery →
+SQL conflict detection → Band → human resolution).
