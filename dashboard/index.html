@@ -43,6 +43,14 @@
   .event .sender.dot-ok  { color: var(--ok); }
   .event .sender.dot-warn { color: var(--warn); }
   .event .sender.dot-err { color: var(--err); }
+  .toolbar { display: flex; justify-content: space-between; align-items: center; margin: 28px 0 12px; }
+  button { background: var(--card); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  .history { background: var(--card); border: 1px solid var(--border); border-radius: 8px; max-height: 360px; overflow-y: auto; }
+  .history-row { display: grid; grid-template-columns: 84px 140px 1fr; gap: 12px; padding: 9px 12px; border-bottom: 1px solid var(--border); font-size: 0.75rem; }
+  .history-row:last-child { border-bottom: none; }
+  .history-row .stamp, .history-row .sender { color: var(--muted); }
+  .history-row .body { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
   footer { text-align: center; color: var(--muted); font-size: 0.75rem; margin-top: 32px; padding-bottom: 16px; }
 </style>
@@ -78,11 +86,21 @@
     <div class="event"><span class="empty">Waiting for events...</span></div>
   </div>
 
+  <div class="toolbar">
+    <div class="section-title" style="margin-bottom:0">Audit History</div>
+    <button id="clearHistoryBtn" type="button">Clear History</button>
+  </div>
+  <div class="history" id="history">
+    <div class="event"><span class="empty">Waiting for history...</span></div>
+  </div>
+
   <footer>Polling bridge agent every 2.5s — <span id="lastUpdate">never</span></footer>
 </div>
 
 <script>
 const TIMELINE = document.getElementById('timeline');
+const HISTORY = document.getElementById('history');
+const CLEAR_HISTORY = document.getElementById('clearHistoryBtn');
 const LAST_UPDATE = document.getElementById('lastUpdate');
 const MSG_CNT = document.getElementById('msgCount');
 const FACT_CNT = document.getElementById('factCount');
@@ -91,26 +109,26 @@ const RES_CNT = document.getElementById('resolvedCount');
 const BRIDGE_DOT = document.getElementById('bridgeDot');
 const BRIDGE_STATUS = document.getElementById('bridgeStatus');
 
-// Heuristic counters from content keywords
-function updateCounts(events) {
-  let facts = 0, conflicts = 0, resolved = 0;
-  for (const e of events) {
-    const c = (e.content || '').toLowerCase();
-    if (e.type === 'system') continue;
-    if (c.includes('stored') || c.includes('fact')) facts++;
-    if (c.includes('conflict') || c.includes('conflit')) conflicts++;
-    if (c.includes('resolved') || c.includes('résolu') || c.includes('auto-resolved')) resolved++;
-  }
-  FACT_CNT.textContent = facts;
-  CONF_CNT.textContent = conflicts;
-  RES_CNT.textContent = resolved;
+function updateCounts(status) {
+  FACT_CNT.textContent = status.facts_stored ?? 0;
+  CONF_CNT.textContent = status.conflicts ?? 0;
+  RES_CNT.textContent = status.resolved ?? 0;
+}
+
+function escapeHtml(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function renderEvent(e) {
   const div = document.createElement('div');
   div.className = 'event';
   if (e.type === 'system') div.classList.add('system');
-  const content = (e.content || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const content = escapeHtml(e.content);
 
   let senderClass = '';
   const lower = (e.content || '').toLowerCase();
@@ -119,7 +137,7 @@ function renderEvent(e) {
   else if (lower.includes('⚠️') || lower.includes('❌') || lower.includes('conflit')) senderClass = 'dot-warn';
   else if (lower.includes('🔍')) senderClass = 'dot-warn';
 
-  const sender = (e.sender_name || e.sender_id || 'unknown').replace(/</g, '&lt;');
+  const sender = escapeHtml(e.sender_name || e.sender_id || 'unknown');
   const time = e.timestamp ? new Date(e.timestamp).toLocaleTimeString() : '';
 
   div.innerHTML = `
@@ -133,11 +151,32 @@ function renderEvent(e) {
   return div;
 }
 
+function renderHistoryRow(e) {
+  const div = document.createElement('div');
+  div.className = 'history-row';
+  const content = escapeHtml(e.content);
+  const sender = escapeHtml(e.sender_name || e.sender_id || 'unknown');
+  const time = e.timestamp ? new Date(e.timestamp).toLocaleTimeString() : '';
+  div.innerHTML = `
+    <div class="stamp">${time}</div>
+    <div class="sender">${sender}</div>
+    <div class="body" title="${content}">${content || '(empty)'}</div>
+  `;
+  return div;
+}
+
 async function poll() {
   try {
-    const resp = await fetch('/events');
-    const data = await resp.json();
+    const [eventsResp, statusResp, historyResp] = await Promise.all([
+      fetch('/events'),
+      fetch('/status'),
+      fetch('/history?limit=200')
+    ]);
+    const data = await eventsResp.json();
+    const status = await statusResp.json();
+    const historyData = await historyResp.json();
     const events = data.events || [];
+    const history = historyData.history || [];
 
     TIMELINE.innerHTML = '';
     if (events.length === 0) {
@@ -150,11 +189,21 @@ async function poll() {
       }
     }
 
-    MSG_CNT.textContent = events.length;
-    updateCounts(events);
+    HISTORY.innerHTML = '';
+    if (history.length === 0) {
+      HISTORY.innerHTML = '<div class="event"><span class="empty">No history yet.</span></div>';
+    } else {
+      for (const e of history) {
+        HISTORY.appendChild(renderHistoryRow(e));
+      }
+    }
 
-    BRIDGE_DOT.className = 'status-dot on';
-    BRIDGE_STATUS.textContent = 'connected';
+    MSG_CNT.textContent = status.messages_seen ?? events.length;
+    updateCounts(status);
+
+    const bridgeState = status.bridge_status || (status.ok ? 'connected' : 'unknown');
+    BRIDGE_DOT.className = bridgeState === 'connected' ? 'status-dot on' : 'status-dot off';
+    BRIDGE_STATUS.textContent = bridgeState;
   } catch (err) {
     BRIDGE_DOT.className = 'status-dot off';
     BRIDGE_STATUS.textContent = 'disconnected';
@@ -164,6 +213,16 @@ async function poll() {
   LAST_UPDATE.textContent = new Date().toLocaleTimeString();
 }
 
+async function clearHistory() {
+  try {
+    await fetch('/history/clear', { method: 'POST' });
+    await poll();
+  } catch (err) {
+    console.error(err);
+  }
+}
+
+CLEAR_HISTORY.addEventListener('click', clearHistory);
 poll();
 setInterval(poll, 2500);
 </script>

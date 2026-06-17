@@ -6,9 +6,12 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "band-sdk>=1.0.0",
+    "dirtyjson>=1.0.8",
     "httpx>=0.28",
     "pydantic>=2.0,<3",
     "python-dotenv>=1.0",
+    "starlette>=0.46,<1",
+    "uvicorn>=0.34",
 ]
 
 [project.scripts]

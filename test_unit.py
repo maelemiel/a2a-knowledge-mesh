@@ -8,8 +8,12 @@ from __future__ import annotations
 import unittest
 import unittest.mock
 import os
+import asyncio
+import json as jsonlib
+import sqlite3
+import tempfile
+from pathlib import Path
 
-from starlette.testclient import TestClient
 from starlette.applications import Starlette
 from starlette.routing import Route
 from starlette.responses import JSONResponse
@@ -126,7 +130,7 @@ class TestWebhookRegexFallback(unittest.TestCase):
 
 
 class TestAuthMiddleware(unittest.TestCase):
-    """Test suite for A2AAuthMiddleware using Starlette TestClient."""
+    """Test suite for A2AAuthMiddleware using a small ASGI harness."""
 
     def setUp(self):
         configure_auth(
@@ -146,8 +150,7 @@ class TestAuthMiddleware(unittest.TestCase):
                 Route("/a2a", dummy_endpoint, methods=["POST"]),
             ]
         )
-        self.app.add_middleware(A2AAuthMiddleware, agent_role="keeper")
-        self.client = TestClient(self.app)
+        self.client = _ASGITestClient(A2AAuthMiddleware(self.app, agent_role="keeper"))
 
     def test_public_path(self):
         resp = self.client.get("/health")
@@ -240,6 +243,232 @@ class TestAuthMiddleware(unittest.TestCase):
         app = Starlette()
         mw = A2AAuthMiddleware(app, agent_role="nonexistent")
         self.assertEqual(mw._expected_token, "")
+
+
+class _ASGIResponse:
+    def __init__(self, status_code: int, body: bytes):
+        self.status_code = status_code
+        self._body = body
+
+    def json(self):
+        return jsonlib.loads(self._body.decode("utf-8"))
+
+
+class _ASGITestClient:
+    def __init__(self, app):
+        self.app = app
+
+    def get(self, path: str, headers: dict[str, str] | None = None) -> _ASGIResponse:
+        return asyncio.run(self._request("GET", path, b"", headers or {}))
+
+    def post(
+        self,
+        path: str,
+        *,
+        json: dict | None = None,
+        content: bytes | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> _ASGIResponse:
+        request_headers = dict(headers or {})
+        if content is None and json is not None:
+            content = jsonlib.dumps(json).encode("utf-8")
+            request_headers.setdefault("Content-Type", "application/json")
+        return asyncio.run(self._request("POST", path, content or b"", request_headers))
+
+    async def _request(
+        self,
+        method: str,
+        path: str,
+        body: bytes,
+        headers: dict[str, str],
+    ) -> _ASGIResponse:
+        raw_headers = [
+            (key.lower().encode("latin-1"), value.encode("latin-1"))
+            for key, value in headers.items()
+        ]
+        scope = {
+            "type": "http",
+            "asgi": {"version": "3.0", "spec_version": "2.3"},
+            "http_version": "1.1",
+            "method": method,
+            "scheme": "http",
+            "path": path,
+            "raw_path": path.encode("ascii"),
+            "query_string": b"",
+            "headers": raw_headers,
+            "client": ("testclient", 50000),
+            "server": ("testserver", 80),
+        }
+        receive_messages = [{"type": "http.request", "body": body, "more_body": False}]
+        sent: list[dict] = []
+
+        async def receive():
+            if receive_messages:
+                return receive_messages.pop(0)
+            return {"type": "http.disconnect"}
+
+        async def send(message):
+            sent.append(message)
+
+        await self.app(scope, receive, send)
+
+        status_code = 500
+        body_chunks = []
+        for message in sent:
+            if message["type"] == "http.response.start":
+                status_code = message["status"]
+            elif message["type"] == "http.response.body":
+                body_chunks.append(message.get("body", b""))
+        return _ASGIResponse(status_code, b"".join(body_chunks))
+
+
+class TestBridgeDashboardState(unittest.TestCase):
+    """Dashboard counters should reflect current DB state, not old timeline text."""
+
+    def test_resolved_current_pair_is_not_open_conflict(self):
+        import agents.bridge_agent as bridge
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmpdir = Path(tmp)
+            keeper_db = tmpdir / "keeper.db"
+            reconciler_db = tmpdir / "reconciler.db"
+
+            conn = sqlite3.connect(keeper_db)
+            conn.execute("""
+                CREATE TABLE facts (
+                    id INTEGER PRIMARY KEY,
+                    subject TEXT NOT NULL,
+                    predicate TEXT NOT NULL,
+                    object TEXT NOT NULL,
+                    source_id TEXT NOT NULL
+                )
+            """)
+            conn.execute(
+                "INSERT INTO facts VALUES (1, 'project-ALLY', 'framework', 'Next.js', 'docs')"
+            )
+            conn.execute(
+                "INSERT INTO facts VALUES (2, 'project-ALLY', 'framework', 'FastAPI', 'code')"
+            )
+            conn.commit()
+            conn.close()
+
+            conn = sqlite3.connect(reconciler_db)
+            conn.execute("""
+                CREATE TABLE conflicts (
+                    id TEXT PRIMARY KEY,
+                    fact_a_id INTEGER NOT NULL,
+                    fact_b_id INTEGER NOT NULL,
+                    status TEXT NOT NULL
+                )
+            """)
+            conn.execute("INSERT INTO conflicts VALUES ('abc12345', 1, 2, 'resolved')")
+            conn.commit()
+            conn.close()
+
+            old_keeper, old_reconciler = bridge.KEEPER_DB, bridge.RECONCILER_DB
+            bridge.KEEPER_DB = keeper_db
+            bridge.RECONCILER_DB = reconciler_db
+            try:
+                state = bridge.get_mesh_state()
+            finally:
+                bridge.KEEPER_DB = old_keeper
+                bridge.RECONCILER_DB = old_reconciler
+
+            self.assertEqual(state["facts_stored"], 2)
+            self.assertEqual(state["conflicts"], 0)
+            self.assertEqual(state["resolved"], 1)
+
+    def test_local_state_mirror_emits_fact_conflict_and_resolution_events(self):
+        import agents.bridge_agent as bridge
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmpdir = Path(tmp)
+            keeper_db = tmpdir / "keeper.db"
+            reconciler_db = tmpdir / "reconciler.db"
+
+            conn = sqlite3.connect(keeper_db)
+            conn.execute("""
+                CREATE TABLE facts (
+                    id INTEGER PRIMARY KEY,
+                    subject TEXT NOT NULL,
+                    predicate TEXT NOT NULL,
+                    object TEXT NOT NULL,
+                    source_id TEXT NOT NULL,
+                    timestamp INTEGER NOT NULL
+                )
+            """)
+            conn.execute(
+                "INSERT INTO facts VALUES "
+                "(1, 'project-ALLY', 'framework', 'Next.js', 'docs', 100),"
+                "(2, 'project-ALLY', 'framework', 'FastAPI', 'code', 101)"
+            )
+            conn.commit()
+            conn.close()
+
+            conn = sqlite3.connect(reconciler_db)
+            conn.execute("""
+                CREATE TABLE conflicts (
+                    id TEXT PRIMARY KEY,
+                    subject TEXT NOT NULL,
+                    predicate TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    fact_a_id INTEGER NOT NULL,
+                    fact_b_id INTEGER NOT NULL,
+                    resolution_fact_id INTEGER,
+                    resolution_reason TEXT,
+                    created_at INTEGER NOT NULL,
+                    resolved_at INTEGER,
+                    severity TEXT,
+                    score_confidence REAL,
+                    auto_resolved INTEGER DEFAULT 0
+                )
+            """)
+            conn.commit()
+            conn.close()
+
+            old_keeper, old_reconciler = bridge.KEEPER_DB, bridge.RECONCILER_DB
+            bridge.KEEPER_DB = keeper_db
+            bridge.RECONCILER_DB = reconciler_db
+            try:
+                mirror = bridge.LocalStateMirror()
+                events = mirror.poll()
+                contents = [event.content for event, _ in events]
+                self.assertTrue(any("Fact stored #1" in c for c in contents))
+                self.assertTrue(any("Fact stored #2" in c for c in contents))
+                self.assertTrue(any("Conflict detected by Keeper" in c for c in contents))
+
+                conn = sqlite3.connect(reconciler_db)
+                conn.execute(
+                    "INSERT INTO conflicts VALUES "
+                    "('abc12345', 'project-ALLY', 'framework', 'open', 1, 2, "
+                    "NULL, NULL, 102, NULL, 'MEDIUM', 0.70, 0)"
+                )
+                conn.commit()
+                conn.close()
+
+                events = mirror.poll()
+                self.assertTrue(any(
+                    "Reconciler opened conflict #abc12345" in event.content
+                    for event, _ in events
+                ))
+
+                conn = sqlite3.connect(reconciler_db)
+                conn.execute(
+                    "UPDATE conflicts SET status='resolved', resolution_fact_id=2, "
+                    "resolution_reason='code is source of truth', resolved_at=103 "
+                    "WHERE id='abc12345'"
+                )
+                conn.commit()
+                conn.close()
+
+                events = mirror.poll()
+                self.assertTrue(any(
+                    "Conflict #abc12345 resolved -> fact #2" in event.content
+                    for event, _ in events
+                ))
+            finally:
+                bridge.KEEPER_DB = old_keeper
+                bridge.RECONCILER_DB = old_reconciler
 
 
 

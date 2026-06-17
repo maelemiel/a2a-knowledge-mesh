@@ -5,6 +5,7 @@ Listens in Band rooms for commands like:
   @keeper store subject=X predicate=Y object=Z source=docs
   @keeper recall project-ALLY
   @keeper list
+  @keeper reset-demo
 
 Stores facts in SQLite. Replies in the room.
 """
@@ -66,6 +67,10 @@ class KeeperAgent(BandAgent):
             await self._cmd_clear(tools, room_id)
             return
 
+        if content == "reset-demo":
+            await self._cmd_reset_demo(tools)
+            return
+
         if content.startswith("get "):
             await self._cmd_get(content[4:], tools)
             return
@@ -77,6 +82,7 @@ class KeeperAgent(BandAgent):
             "  `recall <subject>`\n"
             "  `list`\n"
             "  `detect`\n"
+            "  `reset-demo`\n"
             "  `get <id>`"
         )
 
@@ -104,18 +110,7 @@ class KeeperAgent(BandAgent):
         # Auto-detect conflicts after every store
         conflicts = self.store.detect_conflicts(limit=5)
         if conflicts:
-            reconciler = os.getenv("BAND_RECONCILER_HANDLE", "reconciler")
-            lines = [f"detect — {len(conflicts)} conflit(s):"]
-            for c in conflicts:
-                lines.append(
-                    f"  • `{c['subject']}` → {c['predicate']}: "
-                    f"`{c['object_a']}` (src:{c['source_a']}) vs "
-                    f"`{c['object_b']}` (src:{c['source_b']})"
-                )
-            await tools.send_message(
-                "\n".join(lines),
-                mentions=[reconciler],
-            )
+            await self._handoff_conflicts(conflicts, tools)
 
     async def _cmd_store_batch(self, json_str: str, tools: AgentToolsProtocol) -> None:
         """Store multiple facts from a JSON string."""
@@ -138,18 +133,7 @@ class KeeperAgent(BandAgent):
         # Auto-detect after batch
         conflicts = self.store.detect_conflicts(limit=5)
         if conflicts:
-            reconciler = os.getenv("BAND_RECONCILER_HANDLE", "reconciler")
-            lines = [f"detect — {len(conflicts)} conflit(s):"]
-            for c in conflicts:
-                lines.append(
-                    f"  • `{c['subject']}` → {c['predicate']}: "
-                    f"`{c['object_a']}` (src:{c['source_a']}) vs "
-                    f"`{c['object_b']}` (src:{c['source_b']})"
-                )
-            await tools.send_message(
-                "\n".join(lines),
-                mentions=[reconciler],
-            )
+            await self._handoff_conflicts(conflicts, tools)
 
     async def _cmd_recall(self, args: str, tools: AgentToolsProtocol) -> None:
         subject = args.strip() or None
@@ -191,10 +175,20 @@ class KeeperAgent(BandAgent):
                 f"#{c['fact_b_id']} ({c['source_b']})"
             )
         await tools.send_message("\n".join(lines))
+        await self._handoff_conflicts(conflicts[:5], tools)
 
     async def _cmd_clear(self, tools: AgentToolsProtocol, room_id: str) -> None:
         count = self.store.clear()
         await tools.send_message(f"🗑️ Cleared {count} fact(s) from database")
+
+    async def _cmd_reset_demo(self, tools: AgentToolsProtocol) -> None:
+        count = self.store.clear()
+        reconciler = os.getenv("BAND_RECONCILER_HANDLE", "Reconciler")
+        await tools.send_message(f"🧹 Demo reset: cleared {count} fact(s)")
+        await tools.send_message(
+            "clear",
+            mentions=[reconciler],
+        )
 
     async def _cmd_get(self, args: str, tools: AgentToolsProtocol) -> None:
         try:
@@ -210,6 +204,40 @@ class KeeperAgent(BandAgent):
             f"#{fact['id']} {fact['subject']} → {fact['predicate']} = {fact['object']}\n"
             f"  source: {fact['source_id']} | version: {fact['version']}"
         )
+
+    async def _handoff_conflicts(
+        self,
+        conflicts: list[dict],
+        tools: AgentToolsProtocol,
+    ) -> None:
+        """Tell Reconciler to review conflicts and include structured context."""
+        reconciler = os.getenv("BAND_RECONCILER_HANDLE", "Reconciler")
+        lines = [
+            f"detect — {len(conflicts)} conflict candidate(s)",
+            "handoff: conflict.detected",
+        ]
+        for c in conflicts:
+            lines.append(
+                json.dumps(
+                    {
+                        "type": "conflict.detected",
+                        "subject": c["subject"],
+                        "predicate": c["predicate"],
+                        "fact_a": {
+                            "id": c["fact_a_id"],
+                            "source": c["source_a"],
+                            "object": c["object_a"],
+                        },
+                        "fact_b": {
+                            "id": c["fact_b_id"],
+                            "source": c["source_b"],
+                            "object": c["object_b"],
+                        },
+                    },
+                    ensure_ascii=False,
+                )
+            )
+        await tools.send_message("\n".join(lines), mentions=[reconciler])
 
 
 def _parse_kv(text: str) -> dict[str, str]:

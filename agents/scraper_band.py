@@ -104,7 +104,7 @@ class ScraperAgent(BandAgent):
             batch_json = json.dumps(facts)
             await tools.send_message(
                 f"store-batch {batch_json}",
-                mentions=[os.getenv("BAND_KEEPER_HANDLE", "mael2perso/keeper")],
+                mentions=[os.getenv("BAND_KEEPER_HANDLE", "Keeper")],
             )
             await tools.send_message(f"✅ Sent {len(facts)} facts to Keeper in 1 message")
         except Exception as e:

@@ -7,11 +7,13 @@ Commands:
   @registry register name=X skills=X,Y,Z
   @registry discover <skill>
   @registry list
+  @registry reset-demo
 """
 
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 from band.core.protocols import AgentToolsProtocol
@@ -51,11 +53,16 @@ class RegistryAgent(BandAgent):
             await self._cmd_list(tools)
             return
 
+        if content == "reset-demo":
+            await self._cmd_reset_demo(tools)
+            return
+
         await tools.send_message(
             "🤖 Registry commands:\n"
             "  `register name=X skills=X,Y,Z description=...`\n"
             "  `discover <skill>`\n"
-            "  `list`"
+            "  `list`\n"
+            "  `reset-demo`"
         )
 
     async def _cmd_register(self, args: str, tools: AgentToolsProtocol) -> None:
@@ -100,6 +107,11 @@ class RegistryAgent(BandAgent):
         for a in agents:
             lines.append(f"  • `{a['name']}` ({', '.join(a['skills'])})")
         await tools.send_message("\n".join(lines))
+
+    async def _cmd_reset_demo(self, tools: AgentToolsProtocol) -> None:
+        keeper = os.getenv("BAND_KEEPER_HANDLE", "Keeper")
+        await tools.send_message("reset-demo", mentions=[keeper])
+        await tools.send_message("🧹 Demo reset requested through Keeper")
 
 
 def _parse_kv(text: str) -> dict[str, str]:

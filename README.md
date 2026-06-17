@@ -1,130 +1,169 @@
 # A2A Knowledge Mesh
 
-> 3 A2A agents that discover, store, and reconcile knowledge.
-> They find each other via A2A Agent Cards, coordinate through Band, and negotiate truth together.
+> Band-native multi-agent workflow for enterprise knowledge reconciliation.
+> Agents scrape, store, detect contradictions, hand off review, and keep humans in the loop through Band.
 
-**Hackathon:** Band of Agents (lablab.ai) — June 12–19, 2026
-**Track:** Internal Enterprise Workflows / Regulated & High-Stakes
-**Stack:** Python, A2A Protocol, Band API, SQLite, Pydantic
+**Hackathon:** Band of Agents Hackathon  
+**Primary track:** Regulated & High-Stakes Workflows  
+**Secondary track:** Internal Enterprise Workflows  
+**Stack:** Python, Band SDK, SQLite, Featherless/OpenAI-compatible HTTP APIs
 
-## Architecture
+## What It Solves
+
+Enterprise knowledge drifts. Code, docs, runbooks, tickets, and human notes often disagree. This project turns that drift into a coordinated workflow:
+
+1. **Scraper** extracts structured facts from a repository.
+2. **Keeper** stores facts with provenance and detects contradictory claims.
+3. **Reconciler** reviews conflicts with LLM scoring, root-cause analysis, and resolution tracking.
+4. **Registry** records agent capabilities and can orchestrate a clean demo reset.
+5. **Bridge** mirrors Band room activity and live SQLite state to a dashboard.
+
+Band is the collaboration layer: agents pass structured context, mention the next specialist, and make the handoff visible in the shared room.
+
+## Band-Native Architecture
 
 ```
-                  ┌──────────┐
-  CLI / test ────►│ Registry │  discover agents by skill
-                  ├──────────┤
-User ──► mesh CLI─►│  Keeper  │  store / recall / batch-insert facts
-                  ├──────────────┤
-                  │ Reconciler │  SQL conflict detection → AI suggestion → Band room → webhook
-                  └──────────────┘
+Band Room
+  |
+  |  slurp git <repo>
+  v
+Scraper ── structured facts ──► Keeper
+                                  |
+                                  | conflict.detected handoff
+                                  v
+                              Reconciler ──► AI suggestion / resolution
+                                  |
+                                  v
+                              Dashboard Bridge
 ```
 
-| Agent | Port | Skills |
-|-------|------|--------|
-| Registry | 8765 | discover, register, unregister, list |
-| Keeper | 8766 | store-fact, store-facts-batch, recall, list-facts, detect-conflicts, get-fact |
-| Reconciler | 8767 | detect-conflict, resolve, status, open-conflicts |
+| Agent | Module | Role |
+|---|---|---|
+| Scraper | `agents/scraper_band.py` | Parses project files and sends fact batches to Keeper |
+| Keeper | `agents/keeper_band.py` | SQLite fact store, SQL conflict detection, Reconciler handoff |
+| Reconciler | `agents/reconciler_band.py` | LLM conflict review, dedupe, resolution history |
+| Registry | `agents/registry_band.py` | Agent directory, discovery, demo reset orchestration |
+| Bridge | `agents/bridge_agent.py` | WebSocket listener + local dashboard metrics API |
 
-## Quick Start
+The older HTTP A2A agents are kept for local protocol tests, but the hackathon demo uses the Band-native agents above.
+
+## Setup
 
 ```bash
-git clone https://github.com/maelemiel/a2a-knowledge-mesh.git
-cd a2a-knowledge-mesh
 uv sync
-
-# Generate auth tokens & configure
 cp .env.example .env
-# Fill in: A2A_REGISTRY_TOKEN, A2A_KEEPER_TOKEN, A2A_RECONCILER_TOKEN
-# Generate with:  openssl rand -hex 32
-
-# Run all 3 agents
-uv run python -m agents.runner
-# Or via the CLI script entrypoint
-uv run mesh-runner
 ```
 
-In another terminal, test the full flow:
+Create 5 Band agents and add all of them to the same Band room:
+
+- Scraper
+- Keeper
+- Reconciler
+- Registry
+- Bridge
+
+Fill `.env` with the room ID, agent IDs, API keys, and your Band handle. Keep `.env` private.
+
+## Run
 
 ```bash
-# All agents must be running with tokens set in environment
-
-# E2E integration test (8 steps, uses auto-generated tokens)
-uv run python test_integration.py
-
-# Or use the Web Dashboard
-After starting the agents, open your browser and navigate to:
-[http://localhost:8767/dashboard](http://localhost:8767/dashboard)
-
-This dashboard provides a premium interactive interface featuring:
-- **Interactive SVG Topology Graph**: pulsing node flows indicating agent health and live conflict alerts.
-- **Side-by-Side Conflict Comparison**: direct visibility into Fact A (e.g., docs-repo) vs Fact B (e.g., code-repo) contradictions.
-- **AI Recommendation Engine**: clear view of the winner fact selected by the LLM along with its detailed reasoning.
-- **One-Click Resolvers**: instant manual or AI-driven conflict resolution.
-- **Ingested Fact Search**: live-filterable table explorer of all facts stored in the Keeper agent.
-
-# Or use the CLI
-uv run python mesh.py status
-uv run python mesh.py store subject=project-ALLY predicate=framework object=Next.js source=docs-repo
-uv run python mesh.py recall project-ALLY
-uv run python mesh.py detect
-uv run python mesh.py ingest     # auto-scrape pyproject.toml + .env.example
+bash scripts/run_mesh.sh
 ```
 
-**Expected output:** 8 steps — register → discover → store facts → recall → detect conflicts (SQL JOIN) → resolve → verify status → JSON-RPC error compliance.
+Dashboard:
 
-## Authentication
+```text
+http://localhost:8776
+```
 
-All agents use bearer token auth on `/a2a` endpoints. Tokens are set via env vars:
+If ports are busy:
 
-| Variable | Agent |
-|----------|-------|
-| `A2A_REGISTRY_TOKEN` | Registry |
-| `A2A_KEEPER_TOKEN` | Keeper |
-| `A2A_RECONCILER_TOKEN` | Reconciler |
-| `A2A_MASTER_TOKEN` | CLI / cross-agent fallback |
+```bash
+lsof -i :8776 -i :8775
+kill $(lsof -ti :8776 -ti :8775)
+```
 
-Public endpoints (health, agent card) don't require auth.
+## Judge Demo Flow
 
-## Demo Flow
+In Band:
 
-1. **Register** — Keeper agent registers with Registry (requires bearer token)
-2. **Discover** — Find Keeper by skill `store-fact`
-3. **Store** — Save facts from different sources (conflicting values)
-4. **Detect** — Reconciler calls Keeper's SQL JOIN `detect-conflicts`, gets contradictions, runs AI suggestion
-5. **Resolve** — Pick the winning fact, record the decision
-6. **Ingest** — Auto-scrape `pyproject.toml` / `.env.example` into facts
-7. **Band Webhook** — Push-based resolution when human replies in Band room
+```text
+@Registry reset-demo
+```
 
-## Key Features
+Then run the full workflow:
 
-- **SQL JOIN conflict detection** — O(n log n) instead of O(n²) in-memory scan
-- **Pydantic validation** — All RPC params validated with strict types
-- **JSON-RPC 2.0 spec** — Proper error codes (-32700, -32601, -32602, -32603), `jsonrpc` field validation
-- **ASGI auth middleware** — Bearer token per role, master token fallback
-- **Async I/O** — httpx.AsyncClient throughout, Band retries with exponential backoff
-- **Resilient LLM parser** — Handles markdown fences, trailing commas, truncated JSON
-- **Ingestion scraper** — Extensible `Scraper` ABC with built-in pyproject.toml/.env scrapers
-- **Health checks** — Dependency-aware probes (DB, peer agents, Band)
+```text
+@Scraper slurp git /home/eliott/a2a-knowledge-mesh
+```
 
-## Docs
+Expected flow:
 
-- [ARCHITECTURE.md](ARCHITECTURE.md) — Stack, agents, port map, data model, DB schemas
-- [DESIGN.md](DESIGN.md) — Agent cards, RPC method signatures, contracts, error codes
+1. Scraper scans files and sends `store-batch` to Keeper.
+2. Keeper stores facts and runs SQL conflict detection.
+3. Keeper posts structured `conflict.detected` context and mentions Reconciler.
+4. Reconciler scores the conflict, suggests a winner, explains root cause, and records state.
+5. Dashboard updates live: messages, facts, open conflicts, resolved conflicts.
 
-## Spikes
+Manual mini-demo:
 
-Feasibility spikes in [`spikes/`](spikes/) validated each technology before building the real agents.
+```text
+@Registry reset-demo
+@Keeper store subject=project-ALLY predicate=framework object=Next.js source=docs
+@Keeper store subject=project-ALLY predicate=framework object=FastAPI source=code
+@Keeper detect
+@Reconciler status
+```
 
-## YC RFS Alignment
+After the two stores, dashboard should show:
 
-Touches 2 YC Requests for Startups (Summer 2026):
+```text
+Facts Stored: 2
+Conflicts: 1
+Resolved: 0
+```
 
-- **#5 Company Brain** (Tom Blomfield) — shared knowledge layer for agents
-- **#13 Software for Agents** (Aaron Epstein) — agent-native infrastructure
+After resolving:
 
-**Competing solution:** Memory Store (YC P26) does passive sync (Slack/Gmail → memory). We do active reconciliation (A2A discovery → SQL conflict detection → Band resolution).
+```text
+@Reconciler resolve <conflict_id> <fact_id> docs_updated
+```
 
-## Tech Partners
+Dashboard should show:
 
-- **AI/ML API** — $10 credits for LLM-powered resolution suggestions
-- **Featherless AI** — $25 credits (code `BOA26`), flat-rate open-source inference
+```text
+Conflicts: 0
+Resolved: 1
+```
+
+## Why It Matches The Hackathon
+
+- **At least 3 collaborating agents:** Scraper, Keeper, Reconciler; Registry and Bridge add discovery and observability.
+- **Meaningful Band usage:** facts, conflict handoffs, mentions, status, and human review happen inside Band.
+- **Enterprise workflow:** detects drift between enterprise knowledge sources and produces traceable resolution.
+- **Originality:** not a chatbot; it is a coordinated knowledge-control workflow with structured context and provenance.
+
+## Tests
+
+Unit tests:
+
+```bash
+uv run python -m unittest -v test_unit.py
+```
+
+If local `uv` is broken by Snap, use:
+
+```bash
+.venv/bin/python -m unittest -v test_unit.py
+```
+
+HTTP A2A integration test, legacy/local path:
+
+```bash
+cp -a data data.backup.$(date +%s)
+uv run python test_integration.py
+```
+
+## Safety
+
+Do not commit `.env`. Rotate Band and model-provider keys if they are exposed in logs, screenshots, chats, or demos.

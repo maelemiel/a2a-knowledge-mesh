@@ -6,6 +6,7 @@ Listens for conflict reports from Keeper, creates Band rooms,
 Commands:
   @reconciler detect          → scan Keeper DB, LLM suggests winner
   @reconciler status          → show open/closed conflicts with AI suggestions
+  @reconciler clear           → clear recorded conflicts for a fresh demo
   @reconciler resolve <id> <fact_id> [reason]  → record resolution
 """
 
@@ -70,6 +71,10 @@ class ReconcilerAgent(BandAgent):
             await self._cmd_status(tools)
             return
 
+        if content == "clear":
+            await self._cmd_clear(tools)
+            return
+
         if content.startswith("resolve "):
             await self._cmd_resolve(content[8:], tools)
             return
@@ -78,6 +83,7 @@ class ReconcilerAgent(BandAgent):
             "🤖 Reconciler commands:\n"
             "  `detect`            → scan Keeper DB, AI suggests winner\n"
             "  `status`            → show open/closed conflicts\n"
+            "  `clear`             → clear recorded conflict history\n"
             "  `resolve <id> <fact> [reason]`  → record a resolution"
         )
 
@@ -118,6 +124,7 @@ class ReconcilerAgent(BandAgent):
 
         created = []
         messages = []
+        skipped_existing = 0
 
         for r in rows:
             subject, predicate = r[0], r[1]
@@ -137,6 +144,11 @@ class ReconcilerAgent(BandAgent):
                 "subject": subject,
                 "predicate": predicate,
             }
+
+            existing = self.store.get_conflict_for_pair(fa["id"], fb["id"])
+            if existing:
+                skipped_existing += 1
+                continue
 
             # ---------------------------------------------------------------
             # MAE-53: Semantic conflict detection
@@ -254,9 +266,15 @@ class ReconcilerAgent(BandAgent):
             messages.append(msg_text)
 
         if not created:
-            await tools.send_message(
-                "✅ All candidate pairs were semantically compatible (no real conflicts)."
-            )
+            if skipped_existing:
+                await tools.send_message(
+                    "✅ No new conflicts. "
+                    f"{skipped_existing} conflict pair(s) already tracked/resolved."
+                )
+            else:
+                await tools.send_message(
+                    "✅ All candidate pairs were semantically compatible (no real conflicts)."
+                )
             return
 
         header = f"⚠️ {len(created)} conflict(s) detected:\n"
@@ -281,7 +299,8 @@ class ReconcilerAgent(BandAgent):
                 if c.get("score_confidence") is not None:
                     conf = f" (conf: {c['score_confidence']:.2f})"
                 lines.append(
-                    f"  `{c['conflict_id']}`{severity_tag} {c['subject']} ({c['predicate']}){ai}{conf}"
+                    f"  `{c['conflict_id']}`{severity_tag} "
+                    f"{c['subject']} ({c['predicate']}){ai}{conf}"
                 )
 
         resolved = [c for c in all_c if c["status"] == "resolved"]
@@ -295,6 +314,10 @@ class ReconcilerAgent(BandAgent):
                 )
 
         await tools.send_message("\n".join(lines))
+
+    async def _cmd_clear(self, tools: AgentToolsProtocol) -> None:
+        count = self.store.clear()
+        await tools.send_message(f"🗑️ Cleared {count} recorded conflict(s)")
 
     async def _cmd_resolve(self, args: str, tools: AgentToolsProtocol) -> None:
         parts = args.strip().split(None, 2)

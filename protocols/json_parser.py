@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import logging
 import re
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
-def parse_llm_json(content: str) -> dict | list | None:
+def parse_llm_json(content: str) -> Any | None:
     """Parse LLM output with multiple fallback strategies.
 
     Strategy chain:
@@ -48,6 +50,13 @@ def parse_llm_json(content: str) -> dict | list | None:
         return json.loads(json.dumps(val))
     except Exception as e:
         logger.debug("dirtyjson parsing failed: %s", e)
+
+    # 3b. Python literal fallback — covers simple single-quoted dict/list/string
+    # responses when dirtyjson is not installed in a lightweight environment.
+    try:
+        return ast.literal_eval(cleaned)
+    except (SyntaxError, ValueError):
+        pass
 
     # 4. Regex extraction — find outermost {} or []
     match = re.search(r"(\[.*\]|\{.*\})", cleaned, re.DOTALL)

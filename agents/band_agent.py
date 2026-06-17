@@ -137,17 +137,17 @@ class BandAgent(SimpleAdapter[Any]):
 
         if is_session_bootstrap:
             # Auto-announce + register in the shared room
-            hq = os.getenv("BAND_HQ_ROOM_ID", "")
+            hq = os.getenv("BAND_HQ_ROOM_ID") or os.getenv("BAND_ROOM_ID", "")
             if hq and room_id == hq:
                 await tools.send_message(
                     f"🤖 **{self.agent_name}** en ligne — {self.agent_description}"
                 )
                 # Self-register with Registry
-                reg = os.getenv("BAND_REGISTRY_HANDLE", "registry")
-                skills = {"Keeper": "store,recall,list,detect",
+                reg = os.getenv("BAND_REGISTRY_HANDLE", "Registry")
+                skills = {"Keeper": "store,recall,list,detect,reset-demo",
                           "Registry": "register,discover,list",
-                          "Reconciler": "detect,status,resolve",
-                          "Scraper": "slurp-git,slurp-slack,slurp-teams"}.get(
+                          "Reconciler": "detect,status,resolve,clear",
+                          "Scraper": "slurp-git,extract-facts,send-to-keeper"}.get(
                     self.agent_name, "unknown"
                 )
                 await tools.send_message(

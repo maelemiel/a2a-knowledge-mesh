@@ -295,6 +295,13 @@ class ReconcilerStore:
         ]
         return [dict(zip(keys, r)) for r in rows]
 
+    def clear(self) -> int:
+        """Delete all recorded conflicts. Returns count of deleted rows."""
+        count = self.conn.execute("SELECT COUNT(*) FROM conflicts").fetchone()[0]
+        self.conn.execute("DELETE FROM conflicts")
+        self.conn.commit()
+        return count
+
     def get_fact_row(self, subject: str, predicate: str) -> list[dict]:
         return []
 
@@ -2068,4 +2075,3 @@ if __name__ == "__main__":
     band_id = os.getenv("BAND_AGENT_ID")
     band_key = os.getenv("BAND_API_KEY")
     ReconcilerAgent(band_agent_id=band_id, band_api_key=band_key).run()
-

@@ -1,7 +1,7 @@
 """Dashboard server — proxy requests to Bridge agent.
 
 Simple stdlib HTTP server that serves index.html and proxies
-/events and /metrics to the Bridge agent's HTTP API.
+/events, /metrics, /status, and /history to the Bridge agent's HTTP API.
 
 Usage:
   uv run python dashboard/server.py
@@ -26,6 +26,16 @@ def _fetch(url: str) -> dict:
     """Fetch JSON from the bridge agent."""
     try:
         with urllib.request.urlopen(url, timeout=5) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def _post(url: str) -> dict:
+    """POST to the bridge agent and return its JSON response."""
+    try:
+        req = urllib.request.Request(url, data=b"", method="POST")
+        with urllib.request.urlopen(req, timeout=5) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except Exception as e:
         return {"error": str(e)}
@@ -57,18 +67,31 @@ class Handler(BaseHTTPRequestHandler):
                 self._html(200, "<h1>Dashboard</h1><p>index.html not found</p>")
             return
 
-        if self.path == "/events":
-            data = _fetch(f"{BRIDGE_URL}/events")
+        if self.path.startswith("/events"):
+            data = _fetch(f"{BRIDGE_URL}{self.path}")
             self._json(200, data)
             return
 
-        if self.path == "/metrics":
-            data = _fetch(f"{BRIDGE_URL}/metrics")
+        if self.path.startswith("/metrics"):
+            data = _fetch(f"{BRIDGE_URL}{self.path}")
             self._json(200, data)
             return
 
-        if self.path == "/status":
-            data = _fetch(f"{BRIDGE_URL}/status")
+        if self.path.startswith("/status"):
+            data = _fetch(f"{BRIDGE_URL}{self.path}")
+            self._json(200, data)
+            return
+
+        if self.path.startswith("/history"):
+            data = _fetch(f"{BRIDGE_URL}{self.path}")
+            self._json(200, data)
+            return
+
+        self._json(404, {"error": "not found"})
+
+    def do_POST(self) -> None:
+        if self.path == "/history/clear":
+            data = _post(f"{BRIDGE_URL}/history/clear")
             self._json(200, data)
             return
 
