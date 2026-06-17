@@ -22,8 +22,8 @@ from pathlib import Path
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 
-from agents.keeper import KeeperStore
-from agents.reconciler import ReconcilerStore, _llm_suggest, _build_conflict_message
+from agents.keeper import KeeperStore  # noqa: E402
+from agents.reconciler import ReconcilerStore  # noqa: E402
 
 logging.basicConfig(level=logging.WARNING)
 
