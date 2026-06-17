@@ -22,7 +22,8 @@ def make_handler(card):
             if self.path == "/.well-known/agent-card.json":
                 self._json(200, card)
             else:
-                self.send_response(404); self.end_headers()
+                self.send_response(404)
+                self.end_headers()
 
         def do_POST(self):
             if self.path == "/a2a":
@@ -39,7 +40,8 @@ def make_handler(card):
                 else:
                     self._json(200, {"jsonrpc":"2.0","id":rid,"error":{"code":-32601,"message":"Method not found"}})
             else:
-                self.send_response(404); self.end_headers()
+                self.send_response(404)
+                self.end_headers()
 
         def _json(self, status, data):
             self.send_response(status)

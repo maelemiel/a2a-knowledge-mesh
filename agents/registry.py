@@ -215,5 +215,7 @@ class RegistryAgent(Agent):
 
 
 if __name__ == "__main__":
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).parent.parent / ".env")
     logging.basicConfig(level=logging.INFO)
     RegistryAgent().run()

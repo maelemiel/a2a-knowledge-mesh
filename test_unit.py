@@ -5,12 +5,9 @@ Runs with standard library unittest module.
 
 from __future__ import annotations
 
-import json
 import unittest
 import unittest.mock
 import os
-import shutil
-from pathlib import Path
 
 from starlette.testclient import TestClient
 from starlette.applications import Starlette
@@ -335,7 +332,7 @@ class TestAuthAsync(unittest.IsolatedAsyncioTestCase):
             "type": "http",
             "path": "/a2a",
             "headers": [
-                (b"authorization", f"Bearer test-keeper".encode("utf-8")),
+                (b"authorization", "Bearer test-keeper".encode("utf-8")),
                 (b"x-a2a-signature", sig.encode("utf-8")),
             ]
         }

@@ -10,7 +10,6 @@ Sans argument, scrappe le projet courant.
 
 import os
 import sys
-import json
 import httpx
 import asyncio
 

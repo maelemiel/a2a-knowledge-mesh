@@ -39,6 +39,8 @@ cp .env.example .env
 
 # Run all 3 agents
 uv run python -m agents.runner
+# Or via the CLI script entrypoint
+uv run mesh-runner
 ```
 
 In another terminal, test the full flow:

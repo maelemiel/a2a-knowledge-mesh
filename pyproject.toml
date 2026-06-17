@@ -16,7 +16,7 @@ dependencies = [
 ]
 
 [project.scripts]
-mesh = "agents.runner:main"
+mesh-runner = "agents.runner:main"
 
 [tool.ruff]
 line-length = 100

@@ -130,7 +130,7 @@ class ScraperAgent(BandAgent):
                           "object": data["version"], "source_id": source_id})
         for deps_key in ("dependencies", "devDependencies"):
             for dep_name, dep_ver in data.get(deps_key, {}).items():
-                facts.append({"subject": project_name, "predicate": f"dep-npm",
+                facts.append({"subject": project_name, "predicate": "dep-npm",
                               "object": f"{dep_name}@{dep_ver}",
                               "source_id": f"{source_id}/{deps_key}"})
 

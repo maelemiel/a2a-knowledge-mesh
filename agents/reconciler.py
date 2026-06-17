@@ -30,7 +30,7 @@ from protocols.a2a import AgentCard, A2AResponse, INVALID_PARAMS
 
 if TYPE_CHECKING:
     from starlette.requests import Request
-    from starlette.responses import JSONResponse
+    from starlette.responses import HTMLResponse, JSONResponse
 
 logger = logging.getLogger(__name__)
 
@@ -445,7 +445,6 @@ async def _exponential_backoff(attempt: int) -> None:
 # ---------------------------------------------------------------------------
 
 
-from protocols.json_parser import parse_llm_json as _parse_llm_json
 
 
 async def _llm_call(
@@ -2063,6 +2062,8 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
 
 if __name__ == "__main__":
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).parent.parent / ".env")
     logging.basicConfig(level=logging.INFO)
     band_id = os.getenv("BAND_AGENT_ID")
     band_key = os.getenv("BAND_API_KEY")

@@ -58,7 +58,7 @@ Env-driven chain: `FEATHERLESS_API_KEY` → Featherless, fallback `OPENAI_API_KE
 
 - Python 3.11+, ruff linting (`line-length = 100`)
 - No typechecker configured
-- `pyproject.toml` scripts entry: `mesh = "agents.runner:main"`
+- pyproject.toml scripts entry: `mesh-runner = "agents.runner:main"`
 - No explicit test framework — single `test_integration.py` with auto-generated auth tokens
 - `scripts/git_scraper.py` and `scripts/scraper.py` are standalone scrapers (not part of the agent mesh)
 - `spikes/` contains feasibility validation experiments

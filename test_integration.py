@@ -15,11 +15,15 @@ from pathlib import Path
 
 import httpx
 import json
+from dotenv import load_dotenv
 
 from agents.auth import a2a_call, configure_auth, sign_body
 
 ROOT = Path(__file__).parent
+load_dotenv(ROOT / ".env")
+
 DATA_DIR = ROOT / "data"
+
 
 AGENTS = {
     "registry": {"url": "http://localhost:8765", "proc": None},
