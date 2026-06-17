@@ -3,6 +3,8 @@
 No LLM. No filtering. Listens to ALL messages in the room (not just @mentions)
 and keeps a rolling buffer that the dashboard HTTP server polls.
 
+Connects to Band via WebSocket (BandAgent) — real-time, no polling.
+
 Usage:
   export BAND_BRIDGE_ID=... BAND_BRIDGE_KEY=... BAND_ROOM_ID=...
   uv run python agents/bridge_agent.py
@@ -12,7 +14,6 @@ Or launched by run_mesh.sh.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import os
@@ -23,6 +24,11 @@ from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
+
+from band.core.protocols import AgentToolsProtocol
+from band.core.types import PlatformMessage
+
+from agents.band_agent import BandAgent
 
 load_dotenv(Path(__file__).parent.parent / ".env")
 
@@ -138,91 +144,69 @@ def _run_http_server() -> None:
     server.serve_forever()
 
 
-# ── Bridge Agent (Band adapter) ────────────────────────────────────────
+# ── Bridge Agent (Band-native) ─────────────────────────────────────────
 
 
-class BridgeAgentAdapter:
-    """Minimal adapter that listens to ALL room messages without an LLM loop.
+class BridgeAgent(BandAgent):
+    """Passive observer that captures ALL room messages via WebSocket.
 
-    Connects to Band via REST polling (no WebSocket SDK dependency for the bridge).
+    Does NOT reply to messages — silently pushes them to the dashboard buffer.
+    Extends BandAgent so it lives INSIDE Band via WebSocket, not outside via REST.
     """
 
-    def __init__(self, agent_id: str, api_key: str, room_id: str) -> None:
-        self._agent_id = agent_id
-        self._api_key = api_key
-        self._room_id = room_id
-        self._base_url = os.getenv("BAND_REST_URL", "https://app.band.ai")
-        self._last_message_id: str | None = None
-        self._running = False
+    agent_name = "Bridge"
+    agent_description = "Real-time dashboard bridge. Captures all room messages via WebSocket."
 
-    async def run(self) -> None:
-        """Poll Band API for new messages in the room."""
-        import httpx
+    async def handle_message(
+        self,
+        msg: PlatformMessage,
+        tools: AgentToolsProtocol,
+        room_id: str,
+    ) -> None:
+        """Capture every message into the dashboard buffer — no reply."""
+        content = msg.content
+        sender_id = getattr(msg, "sender_id", "") or ""
+        sender_name = getattr(msg, "sender_name", "") or sender_id
+        created_at = getattr(msg, "created_at", None)
+        timestamp = created_at.isoformat() if isinstance(created_at, datetime) else None
 
-        self._running = True
-        headers = {"X-API-Key": self._api_key, "Content-Type": "application/json"}
+        push_event(Event(
+            "message", content,
+            sender_id=sender_id,
+            sender_name=sender_name,
+            timestamp=timestamp,
+        ))
+        bump_metric("messages_seen")
 
-        async with httpx.AsyncClient(base_url=self._base_url, headers=headers, timeout=15) as client:
-            push_event(Event("system", "Bridge agent connected", sender_id="bridge"))
-
-            while self._running:
-                try:
-                    params = {"limit": 20}
-                    if self._last_message_id:
-                        params["after"] = self._last_message_id
-
-                    resp = await client.get(
-                        f"/api/v1/agent/chats/{self._room_id}/messages",
-                        params=params,
-                    )
-                    if resp.is_success:
-                        data = resp.json()
-                        messages = data.get("data", data.get("messages", []))
-                        if isinstance(messages, list):
-                            for msg in messages:
-                                mid = msg.get("id", "")
-                                if mid == self._last_message_id:
-                                    continue
-                                self._last_message_id = mid
-                                sender = msg.get("sender_name") or msg.get("sender_id", "unknown")
-                                content = msg.get("content", "")
-                                push_event(Event(
-                                    "message", content,
-                                    sender_id=msg.get("sender_id", ""),
-                                    sender_name=sender,
-                                    timestamp=msg.get("created_at"),
-                                ))
-                                bump_metric("messages_seen")
-                    else:
-                        logger.warning("Bridge poll HTTP %d", resp.status_code)
-                except Exception as e:
-                    logger.warning("Bridge poll error: %s", e)
-
-                await asyncio.sleep(2.5)  # poll interval (matches dashboard refresh)
-
-    def stop(self) -> None:
-        self._running = False
+    async def on_bootstrap(
+        self,
+        room_id: str,
+        tools: AgentToolsProtocol,
+    ) -> None:
+        """Announce bridge ready — silent, no room spam."""
+        push_event(Event("system", "Bridge agent connected", sender_id="bridge"))
+        bump_metric("messages_seen")
 
 
-async def main() -> None:
+def main() -> None:
     logging.basicConfig(level=logging.INFO)
 
     agent_id = os.getenv("BAND_BRIDGE_ID", "")
     api_key = os.getenv("BAND_BRIDGE_KEY", "")
-    room_id = os.getenv("BAND_ROOM_ID", "")
 
-    if not agent_id or not api_key or not room_id:
-        logger.error("BAND_BRIDGE_ID, BAND_BRIDGE_KEY, BAND_ROOM_ID must be set")
+    if not agent_id or not api_key:
+        logger.error("BAND_BRIDGE_ID and BAND_BRIDGE_KEY must be set")
         return
 
     # Start HTTP server in a daemon thread
     http_thread = threading.Thread(target=_run_http_server, daemon=True)
     http_thread.start()
 
-    # Run the polling loop
-    bridge = BridgeAgentAdapter(agent_id, api_key, room_id)
-    await bridge.run()
+    # Connect to Band via WebSocket (BandAgent.run blocks until stopped)
+    bridge = BridgeAgent(agent_id=agent_id, api_key=api_key)
+    push_event(Event("system", "Bridge starting — connecting to Band via WebSocket", sender_id="bridge"))
+    bridge.run()
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

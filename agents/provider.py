@@ -102,21 +102,27 @@ def resolve_config(preference: str | None = None) -> ProviderConfig | None:
     # 1. Try preference first
     if preference == "featherless":
         conf = get_featherless()
-        if conf: return conf
+        if conf:
+            return conf
     elif preference == "aiml":
         conf = get_aiml()
-        if conf: return conf
+        if conf:
+            return conf
     elif preference == "openai":
         conf = get_openai()
-        if conf: return conf
+        if conf:
+            return conf
 
     # 2. Try default priority chain
     conf = get_featherless()
-    if conf: return conf
+    if conf:
+        return conf
     conf = get_aiml()
-    if conf: return conf
+    if conf:
+        return conf
     conf = get_openai()
-    if conf: return conf
+    if conf:
+        return conf
 
     return None
 

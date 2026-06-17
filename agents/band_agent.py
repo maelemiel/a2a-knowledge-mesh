@@ -109,6 +109,12 @@ class BandAgent(SimpleAdapter[Any]):
 
         mid = getattr(msg, "id", None)
         if mid is not None:
+            # Periodic cleanup: _seen_ids only needs to cover the stale-replay
+            # window (15 s). Clearing it prevents unbounded memory growth on
+            # long-running agents.  Stale messages older than the cutoff are
+            # already filtered by the timestamp check above.
+            if len(self._seen_ids) > 10_000:
+                self._seen_ids.clear()
             if str(mid) in self._seen_ids:
                 return
             self._seen_ids.add(str(mid))
