@@ -83,22 +83,44 @@ Open Band → your room with all 5 agents
 
 > Expected: agents appear in dashboard Registered Agents panel
 
-**2. Store facts from 2 sources** — create the conflict
+**2. Scan the repo with AI** — Scraper uses LLM to extract real facts from code
 
 ```
-@keeper store subject=project-ALLY predicate=framework object=Next.js source=docs-repo
-@keeper store subject=project-ALLY predicate=framework object=React source=code-repo
-@keeper store subject=project-ALLY predicate=version object=18.2 source=docs-repo
-@keeper store subject=project-ALLY predicate=version object=16.8 source=code-repo
-@keeper store subject=project-ALLY predicate=database object=PostgreSQL source=docs-repo
-@keeper store subject=project-ALLY predicate=database object=MongoDB source=code-repo
-@keeper store subject=project-ALLY predicate=language object=TypeScript source=docs-repo
-@keeper store subject=project-ALLY predicate=language object=TypeScript source=code-repo  # matching
+@scraper scan self
 ```
 
-> Expected: 8 facts stored. "language" has no conflict (both say TypeScript).
+> This is the showpiece: the Scraper agent reads every file in the repo
+> (`pyproject.toml`, Python source, docs, configs) and asks the LLM to
+> extract structured facts: "what language, framework, database, tools
+> does this project use?"
+>
+> **Expected output:**
+> ```
+> 🔍 Scanning a2a-knowledge-mesh with LLM (Featherless)...
+> 📊 Scan complete: 12 facts from 6 files (4 code, 2 doc)
+> ✅ Sent 12 facts to @keeper (1 messages)
+> ```
+>
+> The dashboard now shows ~12 facts from `scraper` source.
+>
+> **Pro tip:** The LLM extracts facts in real time — point at the
+> dashboard counter jumping from 0 to 12 as proof of live AI work.
 
-**3. Detect conflicts**
+**3. Add contradictory "documentation" facts** — simulate stale docs
+
+Now we add facts that contradict what the code actually says.
+This simulates a real-world scenario: docs are outdated vs code is current.
+
+```
+@keeper store subject=a2a-knowledge-mesh predicate=framework object=FastAPI source=docs-repo
+@keeper store subject=a2a-knowledge-mesh predicate=database object=MySQL source=docs-repo
+@keeper store subject=a2a-knowledge-mesh predicate=language object=JavaScript source=docs-repo
+```
+
+> Expected: 3 facts stored. Keeper auto-detects conflicts with the
+> Scraper's facts (Starlette vs FastAPI, SQLite vs MySQL, Python vs JS).
+
+**4. Detect conflicts**
 
 ```
 @keeper detect
@@ -110,37 +132,43 @@ or
 @reconciler detect
 ```
 
-> Expected: 3 conflicts found (framework, version, database). Each has
-> Fact A vs Fact B with sources.
+> Expected: 3 conflicts found. Each shows:
+> ```
+> ⚠️ Conflict on a2a-knowledge-mesh / framework:
+>   Fact A: Starlette (scraper — from pyproject.toml)
+>   Fact B: FastAPI (docs-repo — stale documentation)
+> ```
 
-**4. Check status**
+**5. Check status** — see AI recommendations
 
 ```
 @reconciler status
 ```
 
-> Expected: shows conflict IDs, subjects, statuses (open), AI suggestions
+> Expected: shows each conflict with AI confidence scores.
+> The LLM should favor the Scraper's code-extracted facts over
+> the manual docs-repo entries — because code doesn't lie.
 
-**5. Resolve manually**
-
-```
-@reconciler resolve <conflict_id> <fact_id> docs-repo is the source of truth
-```
-
-Replace `<conflict_id>` and `<fact_id>` with actual values from `status`.
-
-> Expected: conflict moves to "resolved", dashboard counters update
-
-**6. Scan the repo**
+**6. Resolve** — accept AI suggestion
 
 ```
-@scraper scan self
+@reconciler resolve <conflict_id> <suggested_fact_id> Code is source of truth — docs are outdated
 ```
 
-> Expected: Scraper scans the project, extracts facts about the codebase,
-> sends them to Keeper. New facts appear in dashboard.
+> Replace `<conflict_id>` and `<suggested_fact_id>` with actual values
+> from `status`. Expected: conflict moves to "resolved", dashboard
+> counters update, timeline shows resolution event.
 
 **7. Dashboard walkthrough** — same as Path A Step 3
+
+### Why this flow wins jury points
+
+| What they see | Why it matters |
+|---------------|----------------|
+| **LLM extracts facts from real code** | Not a scripted demo — the AI actually reads pyproject.toml and generates facts live |
+| **Live conflict with stale docs** | Real-world problem every company has |
+| **AI picks code over docs** | Shows the mesh understands provenance and trust |
+| **Everything visible in dashboard** | Full audit trail, no black box |
 
 ---
 
