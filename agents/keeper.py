@@ -42,6 +42,7 @@ class KeeperStore:
                 object TEXT NOT NULL,
                 source_id TEXT NOT NULL,
                 source_url TEXT,
+                source_type TEXT DEFAULT 'code',
                 timestamp INTEGER NOT NULL,
                 version INTEGER NOT NULL DEFAULT 1
             )
@@ -53,6 +54,11 @@ class KeeperStore:
             "CREATE INDEX IF NOT EXISTS idx_facts_spo ON facts(subject, predicate, object)"
         )
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_facts_sp ON facts(subject, predicate)")
+        # Migration: add source_type if missing (existing DBs)
+        try:
+            self.conn.execute("ALTER TABLE facts ADD COLUMN source_type TEXT DEFAULT 'code'")
+        except sqlite3.OperationalError:
+            pass  # already exists
         self.conn.commit()
         logger.info("KeeperStore ready at %s", db_path)
 
@@ -67,13 +73,14 @@ class KeeperStore:
         object: str,
         source_id: str = "band",
         source_url: str | None = None,
+        source_type: str = "code",
     ) -> dict:
         ts = int(time.time())
         cur = self.conn.execute(
-            "INSERT INTO facts (subject, predicate, object, source_id, source_url, timestamp, version) "
-            "VALUES (?, ?, ?, ?, ?, ?, "
+            "INSERT INTO facts (subject, predicate, object, source_id, source_url, source_type, timestamp, version) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, "
             "COALESCE((SELECT MAX(version) + 1 FROM facts WHERE subject=? AND predicate=? AND source_id=?), 1))",
-            (subject, predicate, object, source_id, source_url, ts, subject, predicate, source_id),
+            (subject, predicate, object, source_id, source_url, source_type, ts, subject, predicate, source_id),
         )
         self.conn.commit()
         return {
@@ -90,9 +97,10 @@ class KeeperStore:
         ids: list[dict] = []
         for f in facts:
             source = f.get("source_id", "band")
+            stype = f.get("source_type", "code")
             cur = self.conn.execute(
-                "INSERT INTO facts (subject, predicate, object, source_id, source_url, timestamp, version) "
-                "VALUES (?, ?, ?, ?, ?, ?, "
+                "INSERT INTO facts (subject, predicate, object, source_id, source_url, source_type, timestamp, version) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, "
                 "COALESCE((SELECT MAX(version) + 1 FROM facts WHERE subject=? AND predicate=? AND source_id=?), 1))",
                 (
                     f["subject"],
@@ -100,6 +108,7 @@ class KeeperStore:
                     f["object"],
                     source,
                     f.get("source_url"),
+                    stype,
                     ts,
                     f["subject"],
                     f["predicate"],
@@ -129,7 +138,7 @@ class KeeperStore:
         source_id: str | None = None,
         limit: int | None = None,
     ) -> list[dict]:
-        query = "SELECT id, subject, predicate, object, source_id, source_url, timestamp, version FROM facts WHERE 1=1"
+        query = "SELECT id, subject, predicate, object, source_id, source_url, source_type, timestamp, version FROM facts WHERE 1=1"
         params: list[Any] = []
         if subject:
             query += " AND subject = ?"
@@ -150,15 +159,16 @@ class KeeperStore:
                 "object": r[3],
                 "source_id": r[4],
                 "source_url": r[5],
-                "timestamp": r[6],
-                "version": r[7],
+                "source_type": r[6],
+                "timestamp": r[7],
+                "version": r[8],
             }
             for r in rows
         ]
 
     def list_all(self, limit: int = 50, offset: int = 0) -> list[dict]:
         rows = self.conn.execute(
-            "SELECT id, subject, predicate, object, source_id, source_url, timestamp, version "
+            "SELECT id, subject, predicate, object, source_id, source_url, source_type, timestamp, version "
             "FROM facts ORDER BY timestamp DESC LIMIT ? OFFSET ?",
             (limit, offset),
         ).fetchall()
@@ -170,15 +180,16 @@ class KeeperStore:
                 "object": r[3],
                 "source_id": r[4],
                 "source_url": r[5],
-                "timestamp": r[6],
-                "version": r[7],
+                "source_type": r[6],
+                "timestamp": r[7],
+                "version": r[8],
             }
             for r in rows
         ]
 
     def get_by_id(self, fact_id: int) -> dict | None:
         row = self.conn.execute(
-            "SELECT id, subject, predicate, object, source_id, source_url, timestamp, version "
+            "SELECT id, subject, predicate, object, source_id, source_url, source_type, timestamp, version "
             "FROM facts WHERE id=?",
             (fact_id,),
         ).fetchone()
@@ -191,8 +202,9 @@ class KeeperStore:
             "object": row[3],
             "source_id": row[4],
             "source_url": row[5],
-            "timestamp": row[6],
-            "version": row[7],
+            "source_type": row[6],
+            "timestamp": row[7],
+            "version": row[8],
         }
 
     def get_fact(self, fact_id: int) -> dict | None:
@@ -216,6 +228,7 @@ class KeeperStore:
             SELECT f1.subject, f1.predicate,
                    f1.id AS fact_a_id, f2.id AS fact_b_id,
                    f1.source_id AS source_a, f2.source_id AS source_b,
+                   f1.source_type AS source_type_a, f2.source_type AS source_type_b,
                    f1.object AS object_a, f2.object AS object_b,
                    f1.timestamp AS timestamp_a, f2.timestamp AS timestamp_b
             FROM facts f1
@@ -237,10 +250,12 @@ class KeeperStore:
                 "fact_b_id": r[3],
                 "source_a": r[4],
                 "source_b": r[5],
-                "object_a": r[6],
-                "object_b": r[7],
-                "timestamp_a": r[8],
-                "timestamp_b": r[9],
+                "source_type_a": r[6],
+                "source_type_b": r[7],
+                "object_a": r[8],
+                "object_b": r[9],
+                "timestamp_a": r[10],
+                "timestamp_b": r[11],
             }
             for r in rows
         ]
@@ -281,6 +296,7 @@ class KeeperAgent(Agent):
                 object=p.object,
                 source_id=p.source_id,
                 source_url=p.source_url,
+                source_type=p.source_type,
             )
 
         if method == "store-facts-batch":

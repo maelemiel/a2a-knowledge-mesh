@@ -23,6 +23,7 @@ class StoreFactParams(BaseModel):
     object: str = Field(..., min_length=1, max_length=4096, description="Value")
     source_id: str = Field(default="default", max_length=128)
     source_url: str | None = Field(default=None, max_length=2048)
+    source_type: str = Field(default="code", max_length=16, description="code|doc")
 
     @field_validator("source_id")
     @classmethod
