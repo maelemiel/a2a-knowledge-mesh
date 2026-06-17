@@ -1,0 +1,18 @@
+{
+  "scenario": "Code vs Documentation — version conflict",
+  "description": "pyproject.toml dit version 1.0.0, README.md dit version 0.9.0. Keeper détecte, Reconciler résout.",
+  "trigger": "Scraper scanne un repo, trouve deux versions différentes selon la source (code vs doc)",
+  "facts": [
+    {"subject": "project-ally", "predicate": "version", "object": "1.0.0", "source_id": "pyproject.toml", "source_type": "code"},
+    {"subject": "project-ally", "predicate": "version", "object": "0.9.0", "source_id": "README.md", "source_type": "doc"}
+  ],
+  "expected": {
+    "conflict_detected": true,
+    "resolution": "Fact #1 gagnant (pyproject.toml = source of truth pour version)",
+    "severity": "LOW",
+    "confidence": 0.95,
+    "auto_resolved": true,
+    "reason": "pyproject.toml is the authoritative source for package metadata; README is documentation and may be out of date"
+  },
+  "narration": "Deux fichiers disent des versions différentes. Keeper détecte la contradiction en une seule SQL JOIN. Reconciler appelle l'LLM qui reconnaît que pyproject.toml est la source de vérité."
+}

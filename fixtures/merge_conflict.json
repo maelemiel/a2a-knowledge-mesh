@@ -1,0 +1,19 @@
+{
+  "scenario": "Merge conflict — deux branches disent des choses contradictoires",
+  "description": "Deux sources de code (branche main vs branche feature) donnent des dépendances différentes pour le même projet.",
+  "trigger": "Scraper scanne deux branches d'un même repo, trouve des dépendances conflictuelles",
+  "facts": [
+    {"subject": "project-ally", "predicate": "dep-python", "object": "fastapi>=0.115", "source_id": "main/pyproject.toml", "source_type": "code"},
+    {"subject": "project-ally", "predicate": "dep-python", "object": "fastapi>=0.110", "source_id": "feature/pyproject.toml", "source_type": "code"}
+  ],
+  "expected": {
+    "conflict_detected": true,
+    "resolution": "Besoin review humain — les deux sources sont du code avec la même légitimité",
+    "severity": "MEDIUM",
+    "confidence": 0.72,
+    "auto_resolved": false,
+    "human_needed": true,
+    "reason": "Both sources are code (same authority). Semantic difference is small but may indicate an unresolved merge."
+  },
+  "narration": "Deux branches du même repo. Keeper détecte le conflit mais le score de confiance est trop bas pour auto-resolve. Le Reconciler @mention l'humain pour trancher."
+}

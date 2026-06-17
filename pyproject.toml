@@ -1,18 +1,14 @@
 [project]
-name = "a2a-knowledge-mesh"
-version = "0.1.0"
-description = "3 A2A agents that discover, store, and reconcile knowledge via Band"
+name = "knowledge-mesh"
+version = "0.2.0"
+description = "Band-native multi-agent knowledge mesh — persistent fact store with AI conflict resolution"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "uvicorn>=0.34",
-    "starlette>=0.46",
     "band-sdk>=1.0.0",
     "httpx>=0.28",
     "pydantic>=2.0,<3",
-    "pyjwt>=2.0",
-    "dirtyjson>=1.0.8",
-    "coverage>=7.14.1",
+    "python-dotenv>=1.0",
 ]
 
 [project.scripts]

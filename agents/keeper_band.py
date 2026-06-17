@@ -138,7 +138,7 @@ class KeeperAgent(BandAgent):
         # Auto-detect after batch
         conflicts = self.store.detect_conflicts(limit=5)
         if conflicts:
-            reconciler = os.getenv("BAND_RECONCILER_HANDLE", "mael2perso/reconciler")
+            reconciler = os.getenv("BAND_RECONCILER_HANDLE", "reconciler")
             lines = [f"detect — {len(conflicts)} conflit(s):"]
             for c in conflicts:
                 lines.append(

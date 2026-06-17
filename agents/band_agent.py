@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import logging
 import os
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -61,6 +62,9 @@ class BandAgent(SimpleAdapter[Any]):
         self._band_runner: BandAgentRunner | None = None
         self._agent_id = agent_id or ""
         self._api_key = api_key or ""
+        # Stale replay dedup: cutoff is computed per-message, not at init
+        self._seen_ids: set[str] = set()
+        self._stale_grace: int = 15  # seconds — messages older than this at receive time are stale
 
     async def on_message(
         self,
@@ -77,20 +81,50 @@ class BandAgent(SimpleAdapter[Any]):
 
         Delegates to ``handle_message()`` which subclasses override.
         Auto-@mentions the sender in replies (required by Band).
+        Prevents stale replay, self-loop, and agent→agent ping-pong.
         """
         logger.debug(
-            "Message from %s in %s: %.80s",
+            "Message from %s (type=%s) in %s: %.80s",
             msg.sender_name or msg.sender_id,
+            msg.sender_type,
             room_id,
             msg.content,
         )
 
+        # ── Anti-loop: never react to our own messages ────────────────
+        if getattr(msg, "sender_id", None) and msg.sender_id == self._agent_id:
+            return
+
+        # ── Stale replay dedup: skip re-delivered messages from reconnect ──
+        created = getattr(msg, "created_at", None)
+        if isinstance(created, datetime):
+            try:
+                # Compute cutoff dynamically — every message gets a fresh threshold.
+                # This prevents threshold decay on long-running agents.
+                cutoff = datetime.now(timezone.utc) - timedelta(seconds=self._stale_grace)
+                if created < cutoff:
+                    return
+            except TypeError:
+                pass
+
+        mid = getattr(msg, "id", None)
+        if mid is not None:
+            if str(mid) in self._seen_ids:
+                return
+            self._seen_ids.add(str(mid))
+
         if is_session_bootstrap:
             await self.on_bootstrap(room_id, tools)
 
-        # Wrap tools to auto-@mention the sender in every reply
-        # If sender is another agent → mention the human user instead (avoid loops)
-        sender = msg.sender_name if msg.sender_type == "User" else os.getenv("BAND_USER_HANDLE")
+        # ── Mention routing ───────────────────────────────────────────
+        # If sender is an agent, reply to human (breaks agent↔agent loops).
+        # If sender is human, reply to them.
+        sender_type = getattr(msg, "sender_type", "") or ""
+        if sender_type == "User":
+            sender = msg.sender_name or ""
+        else:
+            sender = os.getenv("BAND_USER_HANDLE", "")
+
         original_send = tools.send_message
 
         async def _send(content: str, **kwargs: Any) -> Any:

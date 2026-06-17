@@ -1,0 +1,18 @@
+{
+  "scenario": "Donnée obsolète — doc dit X, code dit Y, doc est vieille",
+  "description": "README.md (daté de 2024) dit que le projet utilise Python 3.10, pyproject.toml (2025) dit Python 3.12.",
+  "trigger": "Scraper trouve un README obsolète qui contredit le code",
+  "facts": [
+    {"subject": "project-ally", "predicate": "python-version", "object": ">=3.10", "source_id": "README.md", "source_type": "doc", "source_url": "file://README.md"},
+    {"subject": "project-ally", "predicate": "python-version", "object": ">=3.12", "source_id": "pyproject.toml", "source_type": "code", "source_url": "file://pyproject.toml"}
+  ],
+  "expected": {
+    "conflict_detected": true,
+    "resolution": "Fact #2 gagnant (source code plus récente = source de vérité)",
+    "severity": "MEDIUM",
+    "confidence": 0.88,
+    "auto_resolved": true,
+    "reason": "pyproject.toml is the build configuration — defines actual runtime constraints. README is documentation that may lag behind."
+  },
+  "narration": "Doc vieille de 6 mois dit Python 3.10, le code dit 3.12. Keeper + Reconciler tranchent en faveur du code, et ça déclenche une alerte 'documentation obsolète'."
+}

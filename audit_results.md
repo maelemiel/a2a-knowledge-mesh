@@ -1,36 +1,52 @@
-# Rapport d'Audit Technique : A2A Knowledge Mesh
+# Rapport d'Audit Technique : Analyse des Agents Band-Native Actuels
 
 ## 1. Résumé Exécutif
-- Le projet **A2A Knowledge Mesh** est une implémentation robuste et propre d'un maillage de connaissances décentralisé basé sur des agents Starlette légers. L'infrastructure est saine, les tests (41 tests unitaires et 8 étapes de test d'intégration e2e) s'exécutent avec succès et valident les fonctionnalités clés d'authentification, de stockage et de réconciliation de faits.
-- **Métriques clés :**
-  - **Fichiers totaux indexés :** 50 fichiers (après retrait de `mesh_agent.py`).
-  - **Fichiers dans le scope de l'audit :** 29 fichiers.
-  - **Fichiers hors-scope ignorés (seuil < 40%) :** 21 fichiers (dossiers `spikes/` et `docs/`).
+- Cet audit se concentre spécifiquement sur le code source et la cohérence technique des agents **Band-native** (`band_agent.py`, `keeper_band.py`, `reconciler_band.py`, `registry_band.py`, `scraper_band.py`) actuellement présents dans le projet.
+- **Résultat global :** La base Band-native est étonnamment mature. Les fonctionnalités complexes de sécurité (anti-boucle de messages) et les intégrations de logique métier (SQLite + LLM) sont déjà en place. Quelques incohérences mineures de fallback et des dépendances de fichiers partagés ont été identifiées.
 
-## 2. Cohérence Architecturale
-L'architecture implémentée correspond fidèlement aux spécifications techniques de [AGENTS.md](file:///home/mael/mael/Dev/band/a2a-knowledge-mesh/AGENTS.md) :
-- **Trois agents ASGI Starlette indépendants :**
-  - `Registry` (port 8765) gère la découverte et l'enregistrement.
-  - `Keeper` (port 8766) stocke les faits RDF-lite dans SQLite.
-  - `Reconciler` (port 8767) détecte les contradictions et gère la résolution via LLM.
-- **Double saveur d'agents :** Les agents A2A HTTP locaux (`agents/{registry,keeper,reconciler}.py`) coexistent proprement avec les agents WebSocket Band-native (`agents/*_band.py`) et partagent les classes de base (`agents/base.py` et `agents/band_agent.py`).
-- **Transport et Sécurité :** L'authentification basée sur des jetons de rôle (`A2A_{ROLE}_TOKEN`) combinée à une signature optionnelle HMAC du corps de requête sur le endpoint `/a2a` fonctionne parfaitement comme validé par les tests.
+## 2. Audit Détaillé des Fichiers Band-Native
 
-## 3. Qualité du Code & Bugs Potentiels
-- **Bug d'annotation résolu :** Le bug d'annotation dans `agents/reconciler.py:L935` (où `HTMLResponse` était indéfini au niveau global) a été corrigé en déplaçant son import sous le bloc `if TYPE_CHECKING:`.
-- **Intégration et chargement du LLM :** La résolution LLM pour les suggestions de conflits est désormais entièrement opérationnelle. L'environnement `.env` est correctement chargé au démarrage autonome des agents (`reconciler`, `keeper`, `registry`) ainsi que dans `test_integration.py`. Les tests d'intégration exploitent désormais directement Featherless (Qwen 2.5 14B) avec succès pour générer des justifications intelligentes.
-- **Avertissements de dépréciation :** `test_unit.py` lève toujours un avertissement de dépréciation de Starlette (`StarletteDeprecationWarning`) concernant l'utilisation de `httpx` avec `starlette.testclient`.
+### A. Socle Commun (`agents/band_agent.py`)
+- **Points forts :** 
+  - Gestion automatique de la reconnexion et du cycle de vie du WebSocket via le SDK Band.
+  - **Sécurité et anti-boucle :** Déduplication efficace des messages répliqués lors d'une reconnexion (*stale replay*) via un ensemble d'identifiants (`_seen_ids`) et un filtre temporel (`_cutoff`).
+  - **Mention routing :** Redéfinition dynamique de `tools.send_message` pour rediriger les réponses vers l'utilisateur humain (`BAND_USER_HANDLE`) si l'émetteur original était un agent, ce qui évite les pings-pongs infinis d'agents.
+- **Faiblesses/Pistes :** 
+  - La valeur de `_cutoff` est figée à l'initialisation (L67) : `self._cutoff = datetime.now(timezone.utc) - timedelta(seconds=15)`. Si l'agent reste connecté plusieurs heures, le seuil de coupure temporelle ne glisse pas et devient obsolète. Il vaudrait mieux recalculer cette coupure dynamiquement lors de la réception de chaque message.
 
-## 4. Code Inutilisé & Nettoyage
-- **`agents/mesh_agent.py` :** Supprimé du dépôt.
-- **`agents/ingester.py` et `agents/llm_extractor.py` :** Ces deux composants d'ingestion de faits et d'extraction via LLM ne sont pas intégrés dans la boucle d'exécution des agents ou du runner et restent purement autonomes.
-- **`scripts/` :** Les scripts de scraping (`git_scraper.py` et `scraper.py`) sont documentés comme "standalone" et ne participent pas à l'exécution de la mesh d'agents.
-- **`spikes/` :** Contient 6 sous-dossiers d'expérimentation technique obsolètes ou archivés.
+### B. Stockage de Faits (`agents/keeper_band.py`)
+- **Points forts :**
+  - Bonne gestion du stockage SQLite via la classe partagée `KeeperStore`.
+  - Support de l'insertion par lot (`store-batch`) avec format JSON, crucial pour l'intégration avec le Scraper.
+  - Détection automatique de conflits lancée après chaque écriture.
+- **Incohérence détectée :**
+  - **Ligne 107 :** En cas de détection de conflit lors d'un `store` simple, le handle du Reconciler utilisé comme fallback par défaut est `"reconciler"`.
+  - **Ligne 141 :** Lors d'un `store-batch`, le fallback par défaut est `"mael2perso/reconciler"`.
+  - *Action :* Harmoniser pour utiliser le même fallback (idéalement `"reconciler"` ou récupérer dynamiquement depuis l'annuaire).
 
-## 5. Recommandations Restantes
+### C. Résolution de Conflits (`agents/reconciler_band.py`)
+- **Points forts :**
+  - Chaîne d'analyse LLM complète (Qwen 2.5 14B sur Featherless) : filtrage sémantique, suggestion du vainqueur, calcul de sévérité/confiance pour auto-résolution et analyse de cause racine.
+  - Stockage local des conflits et de leurs résolutions via `ReconcilerStore`.
+- **Dépendance d'architecture :**
+  - L'agent accède directement au fichier SQLite du Keeper (`self.keeper_db_path = keeper_db or ... /data/keeper.db`) pour faire ses requêtes de détection. Dans un environnement de production distribué (où le Keeper tournerait sur une autre machine), cela échouerait. Pour la démo locale du hackathon, cela reste acceptable et évite les surcoûts réseau.
 
-| Priorité | Cible | Description | Action conseillée |
+### D. Enregistrement (`agents/registry_band.py`)
+- **Points forts :**
+  - Implémentation simple et propre des commandes `register`, `discover` et `list` s'appuyant sur la base SQLite `RegistryStore`.
+
+### E. Collecteur de Données (`agents/scraper_band.py`)
+- **Points forts :**
+  - Extraction de faits structurés à partir de `pyproject.toml`, `package.json`, `Cargo.toml`, `README.md` et `.env.example`.
+  - Envoi groupé des faits en un seul message `store-batch` à l'adresse de `BAND_KEEPER_HANDLE` pour minimiser les appels réseau.
+
+## 3. Recommandations de Code et de Transition
+
+| Priorité | Fichier | Type | Description / Action |
 | :--- | :--- | :--- | :--- |
-| **MOYENNE** | [pyproject.toml](file:///home/mael/mael/Dev/band/a2a-knowledge-mesh/pyproject.toml#L18-L20) | Incohérence de nommage de script | Le script `mesh` dans `pyproject.toml` pointe vers `agents.runner:main`, tandis que le client CLI Band-native s'appelle `mesh.py`. Il est recommandé de renommer l'entrée de script en `runner` ou `mesh-runner` pour éviter toute confusion. |
-| **BASSE** | `agents/ingester.py` / `llm_extractor.py` | Pipeline d'ingestion orphelin | Intégrer formellement ces pipelines dans le runner ou documenter clairement leur mode d'utilisation autonome. |
-| **BASSE** | `spikes/` | Fichiers d'expérimentation temporaires | Nettoyer ou archiver les dossiers de spikes pour alléger le dépôt. |
+| **MOYENNE** | [band_agent.py](file:///home/mael/mael/Dev/band/a2a-knowledge-mesh/agents/band_agent.py#L67) | Optimisation | Rendre le calcul de `self._cutoff` dynamique (au moment de la réception du message dans `on_message` plutôt qu'au constructeur `__init__`) pour que la protection stale-replay reste active sur le long terme. |
+| **MOYENNE** | [keeper_band.py](file:///home/mael/mael/Dev/band/a2a-knowledge-mesh/agents/keeper_band.py#L141) | Alignement | Harmoniser les fallbacks de mention du Reconciler (`"reconciler"` vs `"mael2perso/reconciler"`). |
+| **BASSE** | [scraper_band.py](file:///home/mael/mael/Dev/band/a2a-knowledge-mesh/agents/scraper_band.py#L133) | Qualité | (Déjà résolu) Supprimer les préfixes `f` inutiles sur les chaînes constantes (ex: `f"dep-npm"`). |
+
+## 4. Statut de la Migration
+Le codebase contient actuellement tous les agents Band-native prêts à l'emploi. Le code A2A HTTP traditionnel n'est plus nécessaire au fonctionnement de ces agents mais sert encore de support pour les tests d'intégration.

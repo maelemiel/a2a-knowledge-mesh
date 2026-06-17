@@ -1,0 +1,15 @@
+{
+  "scenario": "Clean run — pas de conflit, tout est cohérent",
+  "description": "Toutes les sources disent la même chose. Aucune contradiction.",
+  "trigger": "Scraper scanne un repo bien maintenu",
+  "facts": [
+    {"subject": "project-ally", "predicate": "version", "object": "2.1.0", "source_id": "pyproject.toml", "source_type": "code"},
+    {"subject": "project-ally", "predicate": "version", "object": "2.1.0", "source_id": "README.md", "source_type": "doc"},
+    {"subject": "project-ally", "predicate": "dep-python", "object": "uvicorn>=0.34", "source_id": "pyproject.toml", "source_type": "code"},
+    {"subject": "project-ally", "predicate": "dep-python", "object": "band-sdk>=1.0.0", "source_id": "pyproject.toml", "source_type": "code"}
+  ],
+  "expected": {
+    "conflict_detected": false
+  },
+  "narration": "Tout est cohérent. Keeper confirme: '✅ No conflicts found — all facts are consistent.'"
+}

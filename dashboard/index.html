@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Knowledge Mesh — Dashboard</title>
+<style>
+  :root { --bg: #0f1115; --card: #181b21; --border: #262a30; --text: #e8eaed; --muted: #7a7f89; --accent: #1D4ED8; --ok: #22c55e; --warn: #f59e0b; --err: #ef4444; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+  .container { max-width: 960px; margin: 0 auto; padding: 24px 16px; }
+
+  /* Header */
+  header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
+  h1 { font-size: 1.5rem; font-weight: 600; }
+  h1 span { color: var(--accent); }
+  .status-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
+  .status-dot.on  { background: var(--ok); }
+  .status-dot.off { background: var(--err); }
+
+  /* Cards row */
+  .cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 24px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+  .card .label { font-size: 0.75rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  .card .value { font-size: 1.75rem; font-weight: 700; margin-top: 4px; }
+  .card .value.ok    { color: var(--ok); }
+  .card .value.warn  { color: var(--warn); }
+  .card .value.err   { color: var(--err); }
+  .card .value.accent { color: var(--accent); }
+
+  /* Timeline */
+  .section-title { font-size: 0.875rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 12px; }
+  .timeline { background: var(--card); border: 1px solid var(--border); border-radius: 8px; max-height: 480px; overflow-y: auto; }
+  .event { padding: 10px 16px; border-bottom: 1px solid var(--border); font-size: 0.8125rem; line-height: 1.4; }
+  .event:last-child { border-bottom: none; }
+  .event .meta { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+  .event .sender { color: var(--accent); font-weight: 500; }
+  .event .time { color: var(--muted); font-size: 0.6875rem; }
+  .event .content { color: var(--text); word-break: break-word; white-space: pre-wrap; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.75rem; }
+  .event.system .sender { color: var(--ok); }
+  .event.mention .sender { color: var(--warn); }
+  .event .empty { color: var(--muted); font-style: italic; }
+  .event .sender.dot-ok  { color: var(--ok); }
+  .event .sender.dot-warn { color: var(--warn); }
+  .event .sender.dot-err { color: var(--err); }
+
+  footer { text-align: center; color: var(--muted); font-size: 0.75rem; margin-top: 32px; padding-bottom: 16px; }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <h1><span>Knowledge</span> Mesh</h1>
+    <div><span class="status-dot on" id="bridgeDot"></span><span id="bridgeStatus">connecting...</span></div>
+  </header>
+
+  <div class="cards">
+    <div class="card">
+      <div class="label">Messages</div>
+      <div class="value accent" id="msgCount">—</div>
+    </div>
+    <div class="card">
+      <div class="label">Facts Stored</div>
+      <div class="value ok" id="factCount">—</div>
+    </div>
+    <div class="card">
+      <div class="label">Conflicts</div>
+      <div class="value warn" id="conflictCount">—</div>
+    </div>
+    <div class="card">
+      <div class="label">Resolved</div>
+      <div class="value ok" id="resolvedCount">—</div>
+    </div>
+  </div>
+
+  <div class="section-title">Live Timeline</div>
+  <div class="timeline" id="timeline">
+    <div class="event"><span class="empty">Waiting for events...</span></div>
+  </div>
+
+  <footer>Polling bridge agent every 2.5s — <span id="lastUpdate">never</span></footer>
+</div>
+
+<script>
+const TIMELINE = document.getElementById('timeline');
+const LAST_UPDATE = document.getElementById('lastUpdate');
+const MSG_CNT = document.getElementById('msgCount');
+const FACT_CNT = document.getElementById('factCount');
+const CONF_CNT = document.getElementById('conflictCount');
+const RES_CNT = document.getElementById('resolvedCount');
+const BRIDGE_DOT = document.getElementById('bridgeDot');
+const BRIDGE_STATUS = document.getElementById('bridgeStatus');
+
+// Heuristic counters from content keywords
+function updateCounts(events) {
+  let facts = 0, conflicts = 0, resolved = 0;
+  for (const e of events) {
+    const c = (e.content || '').toLowerCase();
+    if (e.type === 'system') continue;
+    if (c.includes('stored') || c.includes('fact')) facts++;
+    if (c.includes('conflict') || c.includes('conflit')) conflicts++;
+    if (c.includes('resolved') || c.includes('résolu') || c.includes('auto-resolved')) resolved++;
+  }
+  FACT_CNT.textContent = facts;
+  CONF_CNT.textContent = conflicts;
+  RES_CNT.textContent = resolved;
+}
+
+function renderEvent(e) {
+  const div = document.createElement('div');
+  div.className = 'event';
+  if (e.type === 'system') div.classList.add('system');
+  const content = (e.content || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+  let senderClass = '';
+  const lower = (e.content || '').toLowerCase();
+  if (lower.includes('@')) senderClass = 'mention';
+  else if (lower.includes('✅')) senderClass = 'dot-ok';
+  else if (lower.includes('⚠️') || lower.includes('❌') || lower.includes('conflit')) senderClass = 'dot-warn';
+  else if (lower.includes('🔍')) senderClass = 'dot-warn';
+
+  const sender = (e.sender_name || e.sender_id || 'unknown').replace(/</g, '&lt;');
+  const time = e.timestamp ? new Date(e.timestamp).toLocaleTimeString() : '';
+
+  div.innerHTML = `
+    <div class="meta">
+      <span class="sender ${senderClass}">${sender}</span>
+      <span class="time">${time}</span>
+    </div>
+    <div class="content">${content || '<span class="empty">(empty)</span>'}</div>
+  `;
+
+  return div;
+}
+
+async function poll() {
+  try {
+    const resp = await fetch('/events');
+    const data = await resp.json();
+    const events = data.events || [];
+
+    TIMELINE.innerHTML = '';
+    if (events.length === 0) {
+      TIMELINE.innerHTML = '<div class="event"><span class="empty">No events yet. Waiting...</span></div>';
+    } else {
+      // Show newest first
+      const reversed = [...events].reverse();
+      for (const e of reversed) {
+        TIMELINE.appendChild(renderEvent(e));
+      }
+    }
+
+    MSG_CNT.textContent = events.length;
+    updateCounts(events);
+
+    BRIDGE_DOT.className = 'status-dot on';
+    BRIDGE_STATUS.textContent = 'connected';
+  } catch (err) {
+    BRIDGE_DOT.className = 'status-dot off';
+    BRIDGE_STATUS.textContent = 'disconnected';
+    TIMELINE.innerHTML = `<div class="event"><span class="empty">Bridge offline — ${err.message}</span></div>`;
+  }
+
+  LAST_UPDATE.textContent = new Date().toLocaleTimeString();
+}
+
+poll();
+setInterval(poll, 2500);
+</script>
+</body>
+</html>

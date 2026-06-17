@@ -46,7 +46,13 @@ class ReconcilerAgent(BandAgent):
         super().__init__(**kwargs)
         self.store = ReconcilerStore()
         self.store.migrate_schema()
-        self.keeper_db_path = keeper_db or str(Path(__file__).parent.parent / "data" / "keeper.db")
+        # Keeper DB path: used for local standalone conflict scans.
+        # In production, conflicts are detected by Keeper and pushed via Band @mentions.
+        self.keeper_db_path = (
+            keeper_db
+            or os.getenv("KEEPER_DB_PATH", "")
+            or str(Path(__file__).parent.parent / "data" / "keeper.db")
+        )
 
     async def handle_message(
         self,
