@@ -19,7 +19,7 @@ from typing import Any
 from band.core.protocols import AgentToolsProtocol
 from band.core.types import PlatformMessage
 
-from agents.band_agent import BandAgent
+from agents.band_agent import BandAgent, resolve_handle
 from agents.keeper import KeeperStore
 
 logger = logging.getLogger(__name__)
@@ -104,7 +104,7 @@ class KeeperAgent(BandAgent):
         # Auto-detect conflicts after every store
         conflicts = self.store.detect_conflicts(limit=5)
         if conflicts:
-            reconciler = os.getenv("BAND_RECONCILER_HANDLE", "reconciler")
+            reconciler = resolve_handle("BAND_RECONCILER_HANDLE", "reconciler")
             lines = [f"detect — {len(conflicts)} conflit(s):"]
             for c in conflicts:
                 lines.append(
@@ -138,7 +138,7 @@ class KeeperAgent(BandAgent):
         # Auto-detect after batch
         conflicts = self.store.detect_conflicts(limit=5)
         if conflicts:
-            reconciler = os.getenv("BAND_RECONCILER_HANDLE", "reconciler")
+            reconciler = resolve_handle("BAND_RECONCILER_HANDLE", "reconciler")
             lines = [f"detect — {len(conflicts)} conflit(s):"]
             for c in conflicts:
                 lines.append(

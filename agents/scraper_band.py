@@ -20,7 +20,7 @@ from typing import Any
 from band.core.protocols import AgentToolsProtocol
 from band.core.types import PlatformMessage
 
-from agents.band_agent import BandAgent
+from agents.band_agent import BandAgent, resolve_handle
 from agents.provider import Provider, resolve_config
 from agents.scraper_service import scan_repo
 
@@ -47,10 +47,6 @@ class ScraperAgent(BandAgent):
 
     async def on_bootstrap(self, room_id: str, tools: AgentToolsProtocol) -> None:
         """Auto-scan the configured repo on startup."""
-        await tools.send_message(
-            f"🤖 **{self.agent_name}** en ligne — {self.agent_description}"
-        )
-
         target = REPO_PATH
         if target:
             if self._config is None:
@@ -72,6 +68,11 @@ class ScraperAgent(BandAgent):
     ) -> None:
         content = msg.content.strip()
 
+        if content == "scan ." or content == "scan self":
+            await tools.send_message("🔍 Scanning own repo...")
+            await self._do_scan(str(Path(__file__).parent.parent), tools)
+            return
+
         if content.startswith("scan "):
             path = content[5:].strip()
             await self._do_scan(path or REPO_PATH, tools)
@@ -83,11 +84,6 @@ class ScraperAgent(BandAgent):
 
         if content == "status":
             await self._cmd_status(tools)
-            return
-
-        if content == "scan ." or content == "scan self":
-            await tools.send_message("🔍 Scanning own repo...")
-            await self._do_scan(str(Path(__file__).parent.parent), tools)
             return
 
         await tools.send_message(
@@ -141,7 +137,7 @@ class ScraperAgent(BandAgent):
             await tools.send_message("📭 No facts extracted.")
             return
 
-        keeper = os.getenv("BAND_KEEPER_HANDLE", "keeper")
+        keeper = resolve_handle("BAND_KEEPER_HANDLE", "keeper")
 
         for i in range(0, len(facts), _BATCH_SIZE):
             batch = facts[i:i + _BATCH_SIZE]
@@ -187,7 +183,7 @@ class ScraperAgent(BandAgent):
             if len(conflicts) > 5:
                 lines.append(f"  ... and {len(conflicts) - 5} more")
 
-            reconciler = os.getenv("BAND_RECONCILER_HANDLE", "reconciler")
+            reconciler = resolve_handle("BAND_RECONCILER_HANDLE", "reconciler")
             await tools.send_message(
                 "\n".join(lines),
                 mentions=[reconciler],

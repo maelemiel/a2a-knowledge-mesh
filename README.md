@@ -53,7 +53,7 @@ uv run python test_integration.py
 
 # Or use the Web Dashboard
 After starting the agents, open your browser and navigate to:
-[http://localhost:8767/dashboard](http://localhost:8767/dashboard)
+[http://localhost:8766/dashboard](http://localhost:8766/dashboard)
 
 This dashboard provides a premium interactive interface featuring:
 - **Interactive SVG Topology Graph**: pulsing node flows indicating agent health and live conflict alerts.
@@ -61,6 +61,10 @@ This dashboard provides a premium interactive interface featuring:
 - **AI Recommendation Engine**: clear view of the winner fact selected by the LLM along with its detailed reasoning.
 - **One-Click Resolvers**: instant manual or AI-driven conflict resolution.
 - **Ingested Fact Search**: live-filterable table explorer of all facts stored in the Keeper agent.
+- **Real SQLite Metrics**: fact / conflict / resolution counts read directly from the databases — no heuristic parsing.
+- **Registered Agents Panel**: live directory of all agents registered in the mesh.
+- **Command Cheatsheet**: quick-reference table of every agent's commands.
+- **🗑 Reset Button**: one-click clear of all facts, conflicts, and registrations.
 
 # Or use the CLI
 uv run python mesh.py status
@@ -94,6 +98,21 @@ Public endpoints (health, agent card) don't require auth.
 5. **Resolve** — Pick the winning fact, record the decision
 6. **Ingest** — Auto-scrape `pyproject.toml` / `.env.example` into facts
 7. **Band Webhook** — Push-based resolution when human replies in Band room
+
+## Band Architecture
+
+Agents connect to Band via WebSocket (`band-sdk` + `SimpleAdapter`). See [`agents/band_agent.py`](agents/band_agent.py) for the base class (`BandAgent`).
+
+**Mention routing:**
+- Robust `_strip_mentions()` handles multi-word display names with spaces and accents (e.g. `@Maël Perrigaud/scraper`).
+- Strips Band-encoded `@[[UUID]]` mentions and remaining `@word` prefixes before dispatching to handlers.
+- Agent-to-agent replies always mention the human user (not another agent) — prevents loops.
+- Uses `resolve_handle()` with a cascade: explicit env var → `{BAND_USER_HANDLE}/{agent_name}` → bare name.
+
+**Self-registration:**
+- On bootstrap in the HQ room, each agent auto-registers with the Registry via explicit `@mention`.
+- Registry does **not** self-register (Band rejects `cannot_mention_self`).
+- No more "en ligne" spam on connect.
 
 ## Key Features
 
