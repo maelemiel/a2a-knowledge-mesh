@@ -17,6 +17,10 @@ Le projet est un maillage de connaissances (Knowledge Mesh) Band-native composé
 4. **Scraper** (`scraper_band.py`) : Extracteur de faits depuis les dépôts Git.
 5. **Bridge** (`bridge_agent.py`) : Agent miroir qui capture les flux de la room Band pour alimenter un dashboard en temps réel.
 
+Les LLM sont gérés via `provider.py` :
+- **Featherless** (Qwen 2.5 14B) est le provider par défaut (rapide, idéal pour de petits contextes, limité à 32k).
+- **AIML API** (ex: x-ai/grok-4-1-fast-reasoning) est le provider à privilégier pour les tâches nécessitant une grande fenêtre de contexte (ex: scraping de code volumineux ou synthèse globale).
+
 Tu disposes d'outils d'exploration de fichiers standards et des outils du serveur MCP `tokensave` (`tokensave_context`, `tokensave_search`, `tokensave_files`, `tokensave_callers`, `tokensave_callees`, etc.) qui exploitent un graphe sémantique local déjà initialisé.
 </context>
 
@@ -51,6 +55,7 @@ Tu dois obligatoirement suivre cette méthodologie pour chaque tâche d'analyse 
 - Ne lis JAMAIS un fichier source entier en premier lieu. Utilise d'abord `tokensave` pour localiser le symbole précis ou le bloc de code pertinent.
 - Interdiction de modifier le code d'un module sans avoir vérifié ses impacts sur les autres modules avec les outils de dépendances sémantiques (`tokensave_impact` ou requêtes SQL sur les arêtes `edges`).
 - Utilise toujours l'environnement virtuel du projet (`.venv/bin/python` ou `uv run`) pour exécuter les scripts de test.
+- Pour les appels LLM nécessitant un grand contexte (comme l'extraction de faits sur de gros fichiers), passe l'argument `provider_name="aiml"` lors de l'appel à `provider.chat_completion(...)`.
 </rules>
 
 <few_shot_examples>
