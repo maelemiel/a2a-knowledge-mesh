@@ -222,6 +222,15 @@ class BandAgent(SimpleAdapter[Any]):
             msg = _replace_content(msg, stripped)
         logger.info("[%s] Processed message content: %r", self.agent_name, msg.content)
 
+        # ── Empty message guard: bare @mention with no command ──────
+        if not msg.content.strip():
+            logger.info(
+                "[%s] Empty message after mention stripping — ignoring bare mention from %s",
+                self.agent_name,
+                sender_name or "unknown",
+            )
+            return
+
         # ── Build the safe send_message wrapper ──────────────────────
         # Rule: Band rejects messages with empty mentions.  Fallback chain:
         #   1. Explicit mentions passed by caller (highest priority)
