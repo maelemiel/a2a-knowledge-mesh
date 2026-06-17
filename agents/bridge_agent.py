@@ -3,6 +3,8 @@
 No LLM. No filtering. Listens to ALL messages in the room (not just @mentions)
 and keeps a rolling buffer that the dashboard HTTP server polls.
 
+Connects to Band via WebSocket (BandAgent) — real-time, no polling.
+
 Usage:
   export BAND_BRIDGE_ID=... BAND_BRIDGE_KEY=... BAND_ROOM_ID=...
   uv run python agents/bridge_agent.py
@@ -531,15 +533,11 @@ def _run_http_server() -> None:
     server.serve_forever()
 
 
-# ── Bridge Agent (Band adapter) ────────────────────────────────────────
+# ── Bridge Agent (Band observer) ──────────────────────────────────────
 
 
 class BridgeAgentAdapter:
-    """Minimal adapter that listens to ALL room messages without an LLM loop.
-
-    Connects to Band via the SDK WebSocket layer, then mirrors room events to
-    the local dashboard HTTP server.
-    """
+    """Observe the Band room and mirror messages plus local DB state."""
 
     def __init__(self, agent_id: str, api_key: str, room_id: str) -> None:
         self._agent_id = agent_id
@@ -647,8 +645,8 @@ async def main() -> None:
     http_thread = threading.Thread(target=_run_http_server, daemon=True)
     http_thread.start()
 
-    # Run the polling loop
     bridge = BridgeAgentAdapter(agent_id, api_key, room_id)
+    push_event(Event("system", "Bridge starting — connecting to Band via WebSocket", sender_id="bridge"))
     await bridge.run()
 
 

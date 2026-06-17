@@ -18,6 +18,15 @@
   .status-dot.on  { background: var(--ok); }
   .status-dot.off { background: var(--err); }
 
+  /* Reset button */
+  .btn-reset {
+    background: transparent; border: 1px solid #5c3a1e; color: #d98c5f;
+    padding: 4px 12px; border-radius: 6px; font-size: 0.75rem; cursor: pointer;
+    transition: all 0.15s; margin-left: 12px;
+  }
+  .btn-reset:hover { background: #2d1a0a; border-color: #b87333; color: #f0b37b; }
+  .btn-reset:disabled { opacity: 0.4; cursor: not-allowed; }
+
   /* Cards row */
   .cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 24px; }
   .card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
@@ -53,13 +62,27 @@
   .history-row .body { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
   footer { text-align: center; color: var(--muted); font-size: 0.75rem; margin-top: 32px; padding-bottom: 16px; }
+
+  /* Cheatsheet */
+  .cheatsheet { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 16px 20px; margin-bottom: 24px; }
+  .cheatsheet h3 { font-size: 0.8125rem; font-weight: 600; color: var(--text); margin-bottom: 10px; }
+  .cheatsheet .agent-block { margin-bottom: 12px; }
+  .cheatsheet .agent-block:last-child { margin-bottom: 0; }
+  .cheatsheet .agent-name { font-size: 0.8125rem; font-weight: 600; color: var(--ok); margin-bottom: 4px; }
+  .cheatsheet .cmd-list { list-style: none; padding-left: 0; }
+  .cheatsheet .cmd-list li { font-size: 0.75rem; line-height: 1.5; padding: 2px 0; }
+  .cheatsheet .cmd-list code { background: #1a1d23; color: var(--accent); padding: 1px 5px; border-radius: 3px; font-size: 0.6875rem; }
+  .cheatsheet .cmd-list .desc { color: var(--muted); font-size: 0.6875rem; padding-left: 4px; }
 </style>
 </head>
 <body>
 <div class="container">
   <header>
     <h1><span>Knowledge</span> Mesh</h1>
-    <div><span class="status-dot on" id="bridgeDot"></span><span id="bridgeStatus">connecting...</span></div>
+    <div style="display:flex;align-items:center;">
+      <span class="status-dot on" id="bridgeDot"></span><span id="bridgeStatus">connecting...</span>
+      <button class="btn-reset" id="btnReset" title="Reset all databases">🗑 Reset</button>
+    </div>
   </header>
 
   <div class="cards">
@@ -82,7 +105,7 @@
   </div>
 
   <div class="section-title">Live Timeline</div>
-  <div class="timeline" id="timeline">
+  <div class="timeline" id="timeline" style="margin-bottom: 24px;">
     <div class="event"><span class="empty">Waiting for events...</span></div>
   </div>
 
@@ -94,6 +117,52 @@
     <div class="event"><span class="empty">Waiting for history...</span></div>
   </div>
 
+  <div class="section-title">Registered Agents (Registry Directory)</div>
+  <div class="timeline" id="agentsList" style="max-height: 240px; overflow-y: auto; margin-bottom: 24px;">
+    <div class="event"><span class="empty">No agents registered yet.</span></div>
+  </div>
+
+  <div class="cheatsheet">
+    <h3>📋 Command Cheatsheet</h3>
+    <div class="agent-block">
+      <div class="agent-name">🤖 Scraper</div>
+      <ul class="cmd-list">
+        <li><code>@scraper scan self</code> or <code>@scraper scan .</code> <span class="desc">Analyze the local project code</span></li>
+        <li><code>@scraper scan &lt;path&gt;</code> <span class="desc">Analyze a specific local folder</span></li>
+        <li><code>@scraper status</code> <span class="desc">Show last scan summary</span></li>
+      </ul>
+    </div>
+    <div class="agent-block">
+      <div class="agent-name">🤖 Keeper</div>
+      <ul class="cmd-list">
+        <li><code>@keeper recall &lt;subject&gt;</code> <span class="desc">Search facts on a subject (e.g. project-ALLY)</span></li>
+        <li><code>@keeper list</code> <span class="desc">List the latest stored facts</span></li>
+      </ul>
+    </div>
+    <div class="agent-block">
+      <div class="agent-name">🤖 Reconciler</div>
+      <ul class="cmd-list">
+        <li><code>@reconciler detect</code> <span class="desc">Scan Keeper's DB &amp; run AI conflict analysis</span></li>
+        <li><code>@reconciler status</code> <span class="desc">Show open &amp; resolved conflicts</span></li>
+        <li><code>@reconciler resolve &lt;conflict_id&gt; &lt;fact_id&gt; [reason]</code> <span class="desc">Manually pick a winning fact</span></li>
+      </ul>
+    </div>
+    <div class="agent-block">
+      <div class="agent-name">🤖 Registry</div>
+      <ul class="cmd-list">
+        <li><code>@registry register name=X skills=X,Y,Z description=...</code> <span class="desc">Register an agent in the directory</span></li>
+        <li><code>@registry discover &lt;skill&gt;</code> <span class="desc">Find agents by capability</span></li>
+        <li><code>@registry list</code> <span class="desc">List all registered agents</span></li>
+      </ul>
+    </div>
+    <div class="agent-block">
+      <div class="agent-name">🌉 Bridge</div>
+      <ul class="cmd-list">
+        <li><span class="desc">Passive observer — captures all room messages for the dashboard. No commands.</span></li>
+      </ul>
+    </div>
+  </div>
+
   <footer>Polling bridge agent every 2.5s — <span id="lastUpdate">never</span></footer>
 </div>
 
@@ -101,6 +170,7 @@
 const TIMELINE = document.getElementById('timeline');
 const HISTORY = document.getElementById('history');
 const CLEAR_HISTORY = document.getElementById('clearHistoryBtn');
+const AGENTS_LIST = document.getElementById('agentsList');
 const LAST_UPDATE = document.getElementById('lastUpdate');
 const MSG_CNT = document.getElementById('msgCount');
 const FACT_CNT = document.getElementById('factCount');
@@ -108,11 +178,12 @@ const CONF_CNT = document.getElementById('conflictCount');
 const RES_CNT = document.getElementById('resolvedCount');
 const BRIDGE_DOT = document.getElementById('bridgeDot');
 const BRIDGE_STATUS = document.getElementById('bridgeStatus');
+const BTN_RESET = document.getElementById('btnReset');
 
-function updateCounts(status) {
-  FACT_CNT.textContent = status.facts_stored ?? 0;
-  CONF_CNT.textContent = status.conflicts ?? 0;
-  RES_CNT.textContent = status.resolved ?? 0;
+function updateCounts(status, metrics) {
+  FACT_CNT.textContent = metrics.facts_stored ?? status.facts_stored ?? 0;
+  CONF_CNT.textContent = status.conflicts ?? metrics.conflicts_open ?? metrics.conflicts_total ?? 0;
+  RES_CNT.textContent = status.resolved ?? metrics.conflicts_resolved ?? 0;
 }
 
 function escapeHtml(value) {
@@ -165,16 +236,50 @@ function renderHistoryRow(e) {
   return div;
 }
 
+function renderAgents(agents) {
+  AGENTS_LIST.innerHTML = '';
+  if (!agents || agents.length === 0) {
+    AGENTS_LIST.innerHTML = '<div class="event"><span class="empty">No agents registered yet.</span></div>';
+    return;
+  }
+
+  for (const a of agents) {
+    const div = document.createElement('div');
+    div.className = 'event';
+    let skillsList = '';
+    try {
+      const parsed = typeof a.skills === 'string' ? JSON.parse(a.skills) : a.skills;
+      skillsList = Array.isArray(parsed) ? parsed.join(', ') : String(parsed || '');
+    } catch (e) {
+      skillsList = a.skills || '';
+    }
+
+    div.innerHTML = `
+      <div class="meta">
+        <span class="sender" style="color: var(--ok); font-weight: 600;">${escapeHtml(a.name || a.id)}</span>
+        <span class="time">ID: ${escapeHtml(a.id || '')}</span>
+      </div>
+      <div class="content" style="color: var(--muted); font-size: 0.8125rem;">
+        <strong>Skills:</strong> <span style="color: var(--text);">${escapeHtml(skillsList)}</span>
+        ${a.description ? `<br><strong>Description:</strong> ${escapeHtml(a.description)}` : ''}
+      </div>
+    `;
+    AGENTS_LIST.appendChild(div);
+  }
+}
+
 async function poll() {
   try {
-    const [eventsResp, statusResp, historyResp] = await Promise.all([
+    const [eventsResp, statusResp, historyResp, metricsResp] = await Promise.all([
       fetch('/events'),
       fetch('/status'),
-      fetch('/history?limit=200')
+      fetch('/history?limit=200'),
+      fetch('/metrics')
     ]);
     const data = await eventsResp.json();
     const status = await statusResp.json();
     const historyData = await historyResp.json();
+    const metrics = await metricsResp.json();
     const events = data.events || [];
     const history = historyData.history || [];
 
@@ -199,7 +304,8 @@ async function poll() {
     }
 
     MSG_CNT.textContent = status.messages_seen ?? events.length;
-    updateCounts(status);
+    updateCounts(status, metrics);
+    renderAgents(metrics.registered_agents || []);
 
     const bridgeState = status.bridge_status || (status.ok ? 'connected' : 'unknown');
     BRIDGE_DOT.className = bridgeState === 'connected' ? 'status-dot on' : 'status-dot off';
@@ -225,6 +331,34 @@ async function clearHistory() {
 CLEAR_HISTORY.addEventListener('click', clearHistory);
 poll();
 setInterval(poll, 2500);
+
+// ── Reset Database ────────────────────────────────────────────
+BTN_RESET.addEventListener('click', async () => {
+  if (!confirm('Voulez-vous réinitialiser toutes les données ?\n\nThis clears facts, conflicts, and agent registrations.')) return;
+
+  BTN_RESET.disabled = true;
+  BTN_RESET.textContent = '⏳ Resetting...';
+
+  try {
+    const resp = await fetch('/reset', { method: 'POST' });
+    const data = await resp.json();
+    console.log('Reset:', data);
+
+    // Zero out the counters immediately
+    FACT_CNT.textContent = '0';
+    CONF_CNT.textContent = '0';
+    RES_CNT.textContent = '0';
+
+    // Refresh the full dashboard
+    await poll();
+  } catch (err) {
+    console.error('Reset failed:', err);
+    alert('Reset failed: ' + err.message);
+  } finally {
+    BTN_RESET.disabled = false;
+    BTN_RESET.textContent = '🗑 Reset';
+  }
+});
 </script>
 </body>
 </html>

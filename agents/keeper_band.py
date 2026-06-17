@@ -20,7 +20,7 @@ from typing import Any
 from band.core.protocols import AgentToolsProtocol
 from band.core.types import PlatformMessage
 
-from agents.band_agent import BandAgent
+from agents.band_agent import BandAgent, resolve_handle
 from agents.keeper import KeeperStore
 
 logger = logging.getLogger(__name__)
@@ -183,7 +183,7 @@ class KeeperAgent(BandAgent):
 
     async def _cmd_reset_demo(self, tools: AgentToolsProtocol) -> None:
         count = self.store.clear()
-        reconciler = os.getenv("BAND_RECONCILER_HANDLE", "Reconciler")
+        reconciler = resolve_handle("BAND_RECONCILER_HANDLE", "Reconciler")
         await tools.send_message(f"🧹 Demo reset: cleared {count} fact(s)")
         await tools.send_message(
             "clear",
@@ -211,7 +211,7 @@ class KeeperAgent(BandAgent):
         tools: AgentToolsProtocol,
     ) -> None:
         """Tell Reconciler to review conflicts and include structured context."""
-        reconciler = os.getenv("BAND_RECONCILER_HANDLE", "Reconciler")
+        reconciler = resolve_handle("BAND_RECONCILER_HANDLE", "Reconciler")
         lines = [
             f"detect — {len(conflicts)} conflict candidate(s)",
             "handoff: conflict.detected",

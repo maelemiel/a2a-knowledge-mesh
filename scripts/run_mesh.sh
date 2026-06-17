@@ -8,6 +8,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+export PYTHONPATH="$ROOT"
 
 # Check .env
 if [ ! -f .env ]; then
@@ -31,9 +32,22 @@ for var in BAND_SCRAPER_ID BAND_SCRAPER_KEY \
   fi
 done
 
+# Warn about missing handles (optional — routing uses fallback names)
+WARN=()
+for var in BAND_KEEPER_HANDLE BAND_RECONCILER_HANDLE \
+           BAND_REGISTRY_HANDLE BAND_SCRAPER_HANDLE; do
+  if [ -z "${!var:-}" ]; then
+    WARN+=("$var")
+  fi
+done
+
 if [ ${#MISSING[@]} -gt 0 ]; then
   echo "❌ Missing env vars: ${MISSING[*]}"
   exit 1
+fi
+
+if [ ${#WARN[@]} -gt 0 ]; then
+  echo "⚠️  Optional env vars unset (agent routing uses fallback names): ${WARN[*]}"
 fi
 
 echo "🚀 Starting Knowledge Mesh agents..."

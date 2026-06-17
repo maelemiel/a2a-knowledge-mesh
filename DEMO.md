@@ -1,144 +1,86 @@
-# Knowledge Mesh — 3 Minute Judge Demo
+# Demo Script
 
-## Goal
+## Pitch
 
-Show that Band is the coordination layer, not a notification channel.
+A2A Knowledge Mesh detects and resolves enterprise knowledge drift. Documentation, code, support notes, and internal decisions often disagree. Instead of one chatbot answering from stale context, specialized agents collaborate through Band: one extracts facts, one stores and detects contradictions, one reconciles, one tracks capabilities, and one makes the workflow auditable.
 
-The agents collaborate in the Band room:
-
-```text
-Scraper -> Keeper -> Reconciler -> Human/Dashboard
-```
-
-## Before Recording
+## Run
 
 ```bash
-uv sync
-cp .env.example .env
-# fill Band room, 5 agent credentials, FEATHERLESS_API_KEY
 bash scripts/run_mesh.sh
 ```
 
-Open:
+Open the dashboard:
 
 ```text
 http://localhost:8776
 ```
 
-In Band, reset state:
+## 3-Minute Flow
+
+Reset the demo:
 
 ```text
-@Registry reset-demo
+@Keeper reset-demo
 ```
 
-## Demo Script
-
-### 1. Hook
-
-> "Enterprise knowledge drifts. Code says one thing, docs say another, and humans waste time finding the source of truth. This mesh lets specialized agents coordinate through Band to detect contradictions, review evidence, and track resolution."
-
-### 2. Discovery And Reset
-
-Type:
+Create a contradiction:
 
 ```text
-@Registry list
-```
-
-Say:
-
-> "Registry is the directory. Agents self-register in Band with their skills, so the room can discover who can store facts, scrape repositories, or resolve conflicts."
-
-Then:
-
-```text
-@Registry reset-demo
-```
-
-Dashboard should show zero facts/open conflicts after refresh.
-
-### 3. Full Agent Handoff
-
-Type:
-
-```text
-@Scraper slurp git /home/eliott/a2a-knowledge-mesh
-```
-
-Say:
-
-> "Scraper parses repository files and sends a structured fact batch to Keeper through Band."
-
-Watch for:
-
-```text
-Scraper: Scanning ...
-Scraper: Sent N facts to Keeper
-Keeper: stored N fact(s)
-Keeper: handoff: conflict.detected
-Reconciler: conflict(s) detected...
-```
-
-Say:
-
-> "Keeper owns the fact store. It uses a SQL JOIN to find contradictions, then mentions Reconciler with structured conflict context. Band is the task handoff layer."
-
-### 4. Reconciler Review
-
-When Reconciler posts:
-
-```text
-CONFLIT #...
-Fact A ...
-Fact B ...
-AI suggère ...
-Root cause ...
-Correctif proposé ...
-```
-
-Say:
-
-> "Reconciler scores severity, confidence, source of truth, root cause, and a suggested fix. The human can accept or override."
-
-Manual resolution:
-
-```text
-@Reconciler resolve <conflict_id> <fact_id> source_of_truth_confirmed
-```
-
-Dashboard should move the pair from:
-
-```text
-Conflicts: 1
-Resolved: 0
-```
-
-to:
-
-```text
-Conflicts: 0
-Resolved: 1
-```
-
-### 5. Fallback Mini-Demo
-
-If repo scraping does not produce a conflict, force one:
-
-```text
-@Registry reset-demo
 @Keeper store subject=project-ALLY predicate=framework object=Next.js source=docs
 @Keeper store subject=project-ALLY predicate=framework object=FastAPI source=code
+```
+
+Detect it:
+
+```text
 @Keeper detect
 ```
 
-Expected:
+Show AI review and handoff:
 
 ```text
-Keeper -> Reconciler handoff
-Reconciler -> AI suggestion
-Dashboard -> Facts 2, Conflicts 1
+@Reconciler detect
+@Reconciler status
 ```
 
-## One-Liner
+Resolve it:
 
-> "Band is the shared operating room: agents exchange structured context, recruit the next specialist, expose the handoff to humans, and keep a traceable resolution trail."
+```text
+@Reconciler resolve <conflict_id> <winning_fact_id> code is source of truth
+```
+
+The dashboard should show:
+
+- facts being stored
+- Keeper detecting a conflict
+- Reconciler opening/scoring the conflict
+- Reconciler resolving it
+- the audit history keeping a persistent trace
+
+## Scraper Flow
+
+```text
+@Scraper scan self
+@Scraper status
+```
+
+The Scraper extracts structured facts from the repository and hands them to Keeper in batches. Keeper can then detect contradictions and hand them off to Reconciler.
+
+## Judging Alignment
+
+- **Application of Technology:** Band is the active collaboration layer. Agents mention each other and hand off structured state in-room.
+- **Presentation:** Dashboard shows the timeline, audit history, facts, conflicts, resolutions, and registered agents.
+- **Business Value:** Solves knowledge drift across code, docs, and enterprise knowledge sources.
+- **Originality:** Shows multi-agent review, state coordination, handoff, and persistent auditability rather than a single chatbot.
+
+## Troubleshooting
+
+If the dashboard does not update, restart both ports:
+
+```bash
+kill $(lsof -ti :8776 -ti :8775) 2>/dev/null || true
+bash scripts/run_mesh.sh
+```
+
+Then hard refresh the browser with `Ctrl+Shift+R`.

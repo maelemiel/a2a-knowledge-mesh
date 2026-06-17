@@ -1,4 +1,10 @@
-"""Runner — launch all 3 agents or a single one with auth."""
+"""Runner — launch all 3 agents or a single one with auth.
+
+.. deprecated::
+    Use ``scripts/run_mesh.sh`` for Band-native agents.
+    This runner launches the HTTP A2A agents (not the Band-native mesh).
+    Kept for reference/testing the HTTP protocol.
+"""
 
 from __future__ import annotations
 

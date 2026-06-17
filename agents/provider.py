@@ -36,9 +36,11 @@ logger = logging.getLogger(__name__)
 
 FEATHERLESS_BASE = "https://api.featherless.ai/v1"
 OPENAI_BASE = "https://api.openai.com/v1"
+AIML_BASE = "https://api.aimlapi.com/v1"
 
 DEFAULT_FEATHERLESS_MODEL = "Qwen/Qwen2.5-14B-Instruct"
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
+DEFAULT_AIML_MODEL = "x-ai/grok-4-1-fast-reasoning"
 
 
 @dataclass
@@ -54,32 +56,73 @@ class ProviderConfig:
     provider_name: str = "featherless"
 
 
-def resolve_config() -> ProviderConfig | None:
+def resolve_config(preference: str | None = None) -> ProviderConfig | None:
     """Resolve the active provider from environment variables.
 
     Returns:
         A ``ProviderConfig`` for the first available provider, or ``None``
         when no API key is configured.
     """
-    featherless_key = os.getenv("FEATHERLESS_API_KEY") or os.getenv("FEATHERLESS_KEY")
-    if featherless_key:
-        model = os.getenv("FEATHERLESS_MODEL", DEFAULT_FEATHERLESS_MODEL)
-        return ProviderConfig(
-            api_key=featherless_key,
-            base_url=f"{FEATHERLESS_BASE}/chat/completions",
-            model=model,
-            provider_name="featherless",
-        )
+    def get_featherless():
+        key = os.getenv("FEATHERLESS_API_KEY") or os.getenv("FEATHERLESS_KEY")
+        if key:
+            model = os.getenv("FEATHERLESS_MODEL", DEFAULT_FEATHERLESS_MODEL)
+            return ProviderConfig(
+                api_key=key,
+                base_url=f"{FEATHERLESS_BASE}/chat/completions",
+                model=model,
+                provider_name="featherless",
+            )
+        return None
 
-    openai_key = os.getenv("OPENAI_API_KEY")
-    if openai_key:
-        model = os.getenv("OPENAI_MODEL", DEFAULT_OPENAI_MODEL)
-        return ProviderConfig(
-            api_key=openai_key,
-            base_url=f"{OPENAI_BASE}/chat/completions",
-            model=model,
-            provider_name="openai",
-        )
+    def get_aiml():
+        key = os.getenv("AIML_API_KEY") or os.getenv("AIMLAPI_API_KEY")
+        if key:
+            model = os.getenv("AIML_MODEL", DEFAULT_AIML_MODEL)
+            return ProviderConfig(
+                api_key=key,
+                base_url=f"{AIML_BASE}/chat/completions",
+                model=model,
+                provider_name="aiml",
+            )
+        return None
+
+    def get_openai():
+        key = os.getenv("OPENAI_API_KEY")
+        if key:
+            model = os.getenv("OPENAI_MODEL", DEFAULT_OPENAI_MODEL)
+            return ProviderConfig(
+                api_key=key,
+                base_url=f"{OPENAI_BASE}/chat/completions",
+                model=model,
+                provider_name="openai",
+            )
+        return None
+
+    # 1. Try preference first
+    if preference == "featherless":
+        conf = get_featherless()
+        if conf:
+            return conf
+    elif preference == "aiml":
+        conf = get_aiml()
+        if conf:
+            return conf
+    elif preference == "openai":
+        conf = get_openai()
+        if conf:
+            return conf
+
+    # 2. Try default priority chain
+    conf = get_featherless()
+    if conf:
+        return conf
+    conf = get_aiml()
+    if conf:
+        return conf
+    conf = get_openai()
+    if conf:
+        return conf
 
     return None
 
@@ -133,12 +176,12 @@ class Provider:
         self._max_retries = max_retries
         self._retry_delay = retry_delay
 
-    def resolve(self) -> ProviderConfig | None:
+    def resolve(self, preference: str | None = None) -> ProviderConfig | None:
         """Resolve the active provider configuration.
 
         Returns ``None`` when no API key is found.
         """
-        return resolve_config()
+        return resolve_config(preference)
 
     async def chat_completion(
         self,
@@ -146,6 +189,7 @@ class Provider:
         user: str,
         *,
         config: ProviderConfig | None = None,
+        provider_name: str | None = None,
         temperature: float = 0.2,
         max_tokens: int = 2048,
         parse_json: bool = False,
@@ -156,6 +200,7 @@ class Provider:
             system: System prompt.
             user: User message.
             config: Provider config (resolved automatically if omitted).
+            provider_name: Request a specific provider ('aiml', 'featherless', 'openai').
             temperature: Sampling temperature.
             max_tokens: Maximum tokens in the response.
             parse_json: When ``True``, parse the response as JSON and return
@@ -167,7 +212,7 @@ class Provider:
             or all retries are exhausted.
         """
         if config is None:
-            config = resolve_config()
+            config = resolve_config(provider_name)
 
         if config is None:
             logger.info("No LLM provider configured — returning None")
