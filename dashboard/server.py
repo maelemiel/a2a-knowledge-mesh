@@ -173,7 +173,7 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def _handle_reset(self) -> None:
-        """DELETE FROM all three SQLite databases and return status."""
+        """DELETE FROM local demo databases and clear bridge history."""
         data_dir = Path(__file__).parent.parent / "data"
         cleared = {}
         operations = [
@@ -195,7 +195,8 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 cleared[db_name] = "db not found (skipped)"
 
-        self._json(200, {"status": "ok", "message": "Databases cleared", "details": cleared})
+        cleared["bridge"] = _post(f"{BRIDGE_URL}/history/clear")
+        self._json(200, {"status": "ok", "message": "Demo state cleared", "details": cleared})
 
     def log_message(self, format: str, *args: Any) -> None:
         pass  # quiet

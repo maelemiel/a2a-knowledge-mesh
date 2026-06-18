@@ -6,6 +6,7 @@ Listens in Band rooms for commands like:
   @keeper recall project-ALLY
   @keeper list
   @keeper reset-demo
+  @keeper seed-demo
 
 Stores facts in SQLite. Replies in the room.
 """
@@ -26,9 +27,69 @@ from agents.keeper import KeeperStore
 logger = logging.getLogger(__name__)
 
 
+DEMO_FACTS: list[dict[str, str]] = [
+    {
+        "subject": "runtime",
+        "predicate": "python-version",
+        "object": "3.9",
+        "source_id": "README.md",
+        "source_type": "doc",
+    },
+    {
+        "subject": "runtime",
+        "predicate": "python-version",
+        "object": ">=3.11",
+        "source_id": "pyproject.toml",
+        "source_type": "code",
+    },
+    {
+        "subject": "runtime",
+        "predicate": "python-version",
+        "object": "3.12",
+        "source_id": ".github/workflows/tests.yml",
+        "source_type": "ci",
+    },
+    {
+        "subject": "runtime",
+        "predicate": "python-version",
+        "object": "3.10",
+        "source_id": "Dockerfile",
+        "source_type": "infra",
+    },
+    {
+        "subject": "install",
+        "predicate": "package-manager",
+        "object": "pip",
+        "source_id": "README.md",
+        "source_type": "doc",
+    },
+    {
+        "subject": "install",
+        "predicate": "package-manager",
+        "object": "uv",
+        "source_id": "pyproject.toml",
+        "source_type": "code",
+    },
+    {
+        "subject": "service-api",
+        "predicate": "auth-provider",
+        "object": "Firebase",
+        "source_id": "architecture-docs",
+        "source_type": "doc",
+    },
+    {
+        "subject": "service-api",
+        "predicate": "auth-provider",
+        "object": "Supabase",
+        "source_id": "codebase",
+        "source_type": "code",
+    },
+]
+
+
 class KeeperAgent(BandAgent):
     agent_name = "Keeper"
-    agent_description = "Structured fact store. Commands: store, recall, list, detect"
+    agent_description = "Structured fact store. Commands: store, recall, list, detect, seed-demo"
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -71,6 +132,10 @@ class KeeperAgent(BandAgent):
             await self._cmd_reset_demo(tools)
             return
 
+        if content in {"seed-demo", "demo"}:
+            await self._cmd_seed_demo(tools)
+            return
+
         if content.startswith("get "):
             await self._cmd_get(content[4:], tools)
             return
@@ -83,6 +148,7 @@ class KeeperAgent(BandAgent):
             "  `list`\n"
             "  `detect`\n"
             "  `reset-demo`\n"
+            "  `seed-demo`     → load a config-drift demo scenario\n"
             "  `get <id>`"
         )
 
@@ -189,6 +255,33 @@ class KeeperAgent(BandAgent):
             "clear",
             mentions=[reconciler],
         )
+
+    async def _cmd_seed_demo(self, tools: AgentToolsProtocol) -> None:
+        """Load a deterministic enterprise config-drift scenario."""
+        count = self.store.clear()
+        reconciler = resolve_handle("BAND_RECONCILER_HANDLE", "Reconciler")
+        await tools.send_message(f"🧹 Demo reset: cleared {count} fact(s)")
+        await tools.send_message("clear", mentions=[reconciler])
+
+        results = self.store.store_batch(DEMO_FACTS)
+        await tools.send_message(
+            "🎬 Seeded config-drift demo: "
+            f"{len(results)} facts from README, pyproject, CI, Dockerfile, docs, and code."
+        )
+
+        conflicts = self.store.detect_conflicts(limit=20)
+        if conflicts:
+            lines = [f"⚠️ Demo produced {len(conflicts)} conflict candidate(s):"]
+            for c in conflicts[:6]:
+                lines.append(
+                    f"  {c['subject']} ({c['predicate']}): "
+                    f"#{c['fact_a_id']} [{c['source_a']}] {c['object_a']} vs "
+                    f"#{c['fact_b_id']} [{c['source_b']}] {c['object_b']}"
+                )
+            await tools.send_message("\n".join(lines))
+            await self._handoff_conflicts(conflicts[:6], tools)
+        else:
+            await tools.send_message("✅ Demo facts loaded, but no conflicts were detected.")
 
     async def _cmd_get(self, args: str, tools: AgentToolsProtocol) -> None:
         try:

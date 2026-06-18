@@ -272,8 +272,8 @@ class BandAgent(SimpleAdapter[Any]):
                     reg = resolve_handle("BAND_REGISTRY_HANDLE", "Registry")
                     agent_key = self.agent_name.lower()
                     skills = {
-                        "keeper": "store,store-batch,recall,list,detect,clear,reset-demo,get",
-                        "registry": "register,discover,list",
+                        "keeper": "store,store-batch,recall,list,detect,clear,reset-demo,seed-demo,get",
+                        "registry": "register,discover,list,demo,reset-demo",
                         "reconciler": "detect,status,resolve,clear",
                         "scraper": "scan,status",
                         "bridge": "dashboard,history,timeline",

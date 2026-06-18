@@ -52,6 +52,12 @@
   .event .sender.dot-ok  { color: var(--ok); }
   .event .sender.dot-warn { color: var(--warn); }
   .event .sender.dot-err { color: var(--err); }
+  .event-pill { border: 1px solid var(--border); border-radius: 999px; color: var(--muted); font-size: 0.625rem; font-weight: 700; letter-spacing: 0.05em; margin-right: 8px; padding: 2px 6px; text-transform: uppercase; }
+  .event-pill.fact { border-color: rgba(34,197,94,.45); color: var(--ok); }
+  .event-pill.conflict { border-color: rgba(245,158,11,.55); color: var(--warn); }
+  .event-pill.resolution { border-color: rgba(29,78,216,.65); color: #7aa2ff; }
+  .event-pill.message { border-color: rgba(122,127,137,.45); color: var(--muted); }
+  .event-pill.system { border-color: rgba(34,197,94,.35); color: var(--ok); }
   .toolbar { display: flex; justify-content: space-between; align-items: center; margin: 28px 0 12px; }
   button { background: var(--card); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; cursor: pointer; }
   button:hover { border-color: var(--accent); }
@@ -135,6 +141,7 @@
     <div class="agent-block">
       <div class="agent-name">🤖 Keeper</div>
       <ul class="cmd-list">
+        <li><code>@keeper seed-demo</code> <span class="desc">Load deterministic config-drift facts</span></li>
         <li><code>@keeper recall &lt;subject&gt;</code> <span class="desc">Search facts on a subject (e.g. project-ALLY)</span></li>
         <li><code>@keeper list</code> <span class="desc">List the latest stored facts</span></li>
       </ul>
@@ -150,6 +157,7 @@
     <div class="agent-block">
       <div class="agent-name">🤖 Registry</div>
       <ul class="cmd-list">
+        <li><code>@registry demo</code> <span class="desc">Ask Keeper to seed the config-drift demo</span></li>
         <li><code>@registry register name=X skills=X,Y,Z description=...</code> <span class="desc">Register an agent in the directory</span></li>
         <li><code>@registry discover &lt;skill&gt;</code> <span class="desc">Find agents by capability</span></li>
         <li><code>@registry list</code> <span class="desc">List all registered agents</span></li>
@@ -210,10 +218,14 @@ function renderEvent(e) {
 
   const sender = escapeHtml(e.sender_name || e.sender_id || 'unknown');
   const time = e.timestamp ? new Date(e.timestamp).toLocaleTimeString() : '';
+  const eventType = escapeHtml(e.type || 'event');
 
   div.innerHTML = `
     <div class="meta">
-      <span class="sender ${senderClass}">${sender}</span>
+      <span>
+        <span class="event-pill ${eventType}">${eventType}</span>
+        <span class="sender ${senderClass}">${sender}</span>
+      </span>
       <span class="time">${time}</span>
     </div>
     <div class="content">${content || '<span class="empty">(empty)</span>'}</div>

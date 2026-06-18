@@ -18,6 +18,23 @@ Le mesh a déjà :
 **Ce qui manque :** des agents qui extraient des faits depuis d'autres sources
 (GitHub, Jira, Linear, Slack, Teams...) et les poussent dans le Keeper.
 
+## Focus hackathon
+
+Pour la soumission Band of Agents, le meilleur ROI n'est pas d'ajouter toutes
+les intégrations. Le focus gagnant est :
+
+1. Montrer une collaboration Band claire : Registry → Keeper → Reconciler → Dashboard.
+2. Utiliser un scénario déterministe `@Registry demo` / `@Keeper seed-demo`.
+3. Démontrer un drift entreprise concret : README, `pyproject.toml`, CI,
+   Dockerfile, architecture docs et code qui ne racontent pas la même histoire.
+4. Garder une trace dans le dashboard : facts, handoff, conflit, résolution,
+   audit history.
+
+Le prochain agent à construire si le temps le permet est le
+**Dependency / Config Drift Agent**. Une première version du scénario existe
+déjà via `seed-demo`; l'agent complet automatiserait cette extraction depuis
+les vrais fichiers du repo.
+
 Chaque nouvelle source = un nouveau fichier `agents/<source>_agent.py`
 qui suit le pattern du Scraper :
 

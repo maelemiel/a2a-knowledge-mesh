@@ -7,6 +7,7 @@ Commands:
   @registry register name=X skills=X,Y,Z
   @registry discover <skill>
   @registry list
+  @registry demo
   @registry reset-demo
 """
 
@@ -19,7 +20,7 @@ from typing import Any
 from band.core.protocols import AgentToolsProtocol
 from band.core.types import PlatformMessage
 
-from agents.band_agent import BandAgent
+from agents.band_agent import BandAgent, resolve_handle
 from agents.registry import RegistryStore
 
 logger = logging.getLogger(__name__)
@@ -27,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 class RegistryAgent(BandAgent):
     agent_name = "Registry"
-    agent_description = "Agent directory. Commands: register, discover, list"
+    agent_description = "Agent directory. Commands: register, discover, list, demo"
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -57,11 +58,16 @@ class RegistryAgent(BandAgent):
             await self._cmd_reset_demo(tools)
             return
 
+        if content in {"demo", "seed-demo"}:
+            await self._cmd_seed_demo(tools)
+            return
+
         await tools.send_message(
             "🤖 Registry commands:\n"
             "  `register name=X skills=X,Y,Z description=...`\n"
             "  `discover <skill>`\n"
             "  `list`\n"
+            "  `demo`       → ask Keeper to load the config-drift scenario\n"
             "  `reset-demo`"
         )
 
@@ -109,9 +115,17 @@ class RegistryAgent(BandAgent):
         await tools.send_message("\n".join(lines))
 
     async def _cmd_reset_demo(self, tools: AgentToolsProtocol) -> None:
-        keeper = os.getenv("BAND_KEEPER_HANDLE", "Keeper")
+        keeper = resolve_handle("BAND_KEEPER_HANDLE", "Keeper")
         await tools.send_message("reset-demo", mentions=[keeper])
         await tools.send_message("🧹 Demo reset requested through Keeper")
+
+    async def _cmd_seed_demo(self, tools: AgentToolsProtocol) -> None:
+        keeper = resolve_handle("BAND_KEEPER_HANDLE", "Keeper")
+        await tools.send_message("seed-demo", mentions=[keeper])
+        await tools.send_message(
+            "🎬 Config-drift demo requested through Keeper. "
+            "Watch the dashboard timeline for facts, handoff, and conflicts."
+        )
 
 
 def _parse_kv(text: str) -> dict[str, str]:

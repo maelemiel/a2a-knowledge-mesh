@@ -55,13 +55,32 @@ kill $(lsof -ti :8776 -ti :8775) 2>/dev/null || true
 In the Band room:
 
 ```text
+@Registry demo
+@Reconciler detect
+@Reconciler status
+@Reconciler resolve <conflict_id> <fact_id> pyproject is executable source of truth
+```
+
+This loads a deterministic enterprise config-drift scenario:
+
+- README says Python `3.9`
+- `pyproject.toml` requires Python `>=3.11`
+- CI uses Python `3.12`
+- Dockerfile uses Python `3.10`
+- README says install with `pip`
+- project metadata says install with `uv`
+- architecture docs say Firebase auth
+- code says Supabase auth
+
+Manual fallback:
+
+```text
 @Keeper reset-demo
-@Keeper store subject=project-ALLY predicate=framework object=Next.js source=docs
-@Keeper store subject=project-ALLY predicate=framework object=FastAPI source=code
+@Keeper store subject=runtime predicate=python-version object=3.9 source=README.md
+@Keeper store subject=runtime predicate=python-version object=>=3.11 source=pyproject.toml
 @Keeper detect
 @Reconciler detect
 @Reconciler status
-@Reconciler resolve <conflict_id> <fact_id> code is source of truth
 ```
 
 For repo scanning:
@@ -82,6 +101,14 @@ The dashboard shows:
 - reset button for local demo databases
 
 The live timeline is intentionally backed by both Band WebSocket events and local DB polling, so facts, conflicts, and resolutions still appear even if a Band event is missed.
+
+## Why It Fits Band Of Agents
+
+- **At least 3 collaborating agents:** Scraper, Keeper, Reconciler, Registry, and Bridge.
+- **Band is central:** agents communicate and hand off work in the Band room.
+- **Structured context:** Keeper sends conflict payloads to Reconciler with subject, predicate, sources, and fact IDs.
+- **Human-in-the-loop decisions:** Reconciler suggests and records resolutions.
+- **Enterprise value:** the workflow catches drift between docs, code, CI, and architecture decisions before teams make decisions from stale information.
 
 ## Tests
 

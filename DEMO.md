@@ -18,36 +18,41 @@ http://localhost:8776
 
 ## 3-Minute Flow
 
-Reset the demo:
+Seed the deterministic config-drift demo:
 
 ```text
-@Keeper reset-demo
+@Registry demo
 ```
 
-Create a contradiction:
+This asks Keeper, through Band, to reset local demo state and load facts that disagree across README, `pyproject.toml`, CI, Dockerfile, docs, and code.
 
-```text
-@Keeper store subject=project-ALLY predicate=framework object=Next.js source=docs
-@Keeper store subject=project-ALLY predicate=framework object=FastAPI source=code
-```
-
-Detect it:
-
-```text
-@Keeper detect
-```
-
-Show AI review and handoff:
+Show the handoff and AI review:
 
 ```text
 @Reconciler detect
 @Reconciler status
 ```
 
-Resolve it:
+Resolve one conflict:
 
 ```text
-@Reconciler resolve <conflict_id> <winning_fact_id> code is source of truth
+@Reconciler resolve <conflict_id> <winning_fact_id> pyproject is executable source of truth
+```
+
+Manual fallback if Registry is not registered yet:
+
+```text
+@Keeper seed-demo
+```
+
+Minimal manual fallback:
+
+```text
+@Keeper reset-demo
+@Keeper store subject=runtime predicate=python-version object=3.9 source=README.md
+@Keeper store subject=runtime predicate=python-version object=>=3.11 source=pyproject.toml
+@Keeper detect
+@Reconciler detect
 ```
 
 The dashboard should show:
@@ -71,8 +76,19 @@ The Scraper extracts structured facts from the repository and hands them to Keep
 
 - **Application of Technology:** Band is the active collaboration layer. Agents mention each other and hand off structured state in-room.
 - **Presentation:** Dashboard shows the timeline, audit history, facts, conflicts, resolutions, and registered agents.
-- **Business Value:** Solves knowledge drift across code, docs, and enterprise knowledge sources.
+- **Business Value:** Solves knowledge drift across code, docs, CI, configuration, and enterprise knowledge sources.
 - **Originality:** Shows multi-agent review, state coordination, handoff, and persistent auditability rather than a single chatbot.
+
+## 60-Second Version
+
+```text
+@Registry demo
+@Reconciler detect
+@Reconciler status
+@Reconciler resolve <conflict_id> <winning_fact_id> pyproject is source of truth
+```
+
+Narration: “Instead of asking one agent for an answer, specialized agents coordinate in Band. Keeper stores evidence, Reconciler reviews contradictions, and the dashboard keeps an audit trail.”
 
 ## Troubleshooting
 

@@ -469,8 +469,26 @@ class TestBridgeDashboardState(unittest.TestCase):
             finally:
                 bridge.KEEPER_DB = old_keeper
                 bridge.RECONCILER_DB = old_reconciler
+class TestBandDemoSeed(unittest.TestCase):
+    """The deterministic hackathon demo should always produce conflicts."""
 
+    def test_demo_facts_generate_config_drift_conflicts(self):
+        from agents.keeper import KeeperStore
+        from agents.keeper_band import DEMO_FACTS
 
+        with tempfile.TemporaryDirectory() as tmp:
+            store = KeeperStore(str(Path(tmp) / "keeper.db"))
+            try:
+                store.store_batch(DEMO_FACTS)
+                conflicts = store.detect_conflicts()
+            finally:
+                store.close()
+
+        keys = {(c["subject"], c["predicate"]) for c in conflicts}
+        self.assertIn(("runtime", "python-version"), keys)
+        self.assertIn(("install", "package-manager"), keys)
+        self.assertIn(("service-api", "auth-provider"), keys)
+        self.assertGreaterEqual(len(conflicts), 3)
 
 
 class TestAuthAsync(unittest.IsolatedAsyncioTestCase):
