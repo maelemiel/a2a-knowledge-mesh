@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Knowledge Mesh — Architecture</title>
+<style>
+  :root {
+    --bg: #090b0f;
+    --surface: #14171c;
+    --surface-2: #191d23;
+    --border: #2a3038;
+    --text: #f2f4f7;
+    --muted: #8a929d;
+    --blue: #3478f6;
+    --green: #2ed39a;
+    --amber: #f4ad42;
+    --red: #ef6262;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { background: var(--bg); color: var(--text); }
+  body { min-height: 100vh; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: var(--bg); letter-spacing: 0; }
+  a { color: inherit; }
+
+  .topbar {
+    position: absolute;
+    z-index: 5;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 68px;
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: center;
+    gap: 18px;
+    padding: 0 28px;
+    background: rgba(9, 11, 15, 0.88);
+    border-bottom: 1px solid rgba(255,255,255,0.09);
+  }
+  .brand { font-size: 1rem; font-weight: 700; text-decoration: none; }
+  .brand span { color: var(--blue); }
+  .view-tabs { display: flex; gap: 4px; padding: 3px; border: 1px solid var(--border); background: #111419; border-radius: 7px; }
+  .view-tabs a { min-width: 96px; padding: 7px 10px; color: var(--muted); border-radius: 5px; font-size: 0.75rem; font-weight: 650; text-align: center; text-decoration: none; }
+  .view-tabs a:hover { color: var(--text); }
+  .view-tabs a.active { color: var(--text); background: var(--surface-2); }
+  .connection { justify-self: end; display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 0.75rem; }
+  .connection-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--amber); }
+  .connection-dot.on { background: var(--green); }
+  .connection-dot.off { background: var(--red); }
+
+  .hero {
+    position: relative;
+    min-height: 74vh;
+    max-height: 790px;
+    overflow: hidden;
+    border-bottom: 1px solid var(--border);
+  }
+  .hero-image { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center; }
+  .hero-shade { position: absolute; inset: 0; background: rgba(4, 7, 11, 0.28); }
+  .hero-content {
+    position: relative;
+    z-index: 2;
+    width: min(1180px, calc(100% - 40px));
+    margin: 0 auto;
+    padding-top: 94px;
+    text-align: center;
+  }
+  .eyebrow { color: #b9c8df; font-size: 0.75rem; font-weight: 700; text-transform: uppercase; }
+  h1 { margin-top: 8px; font-size: 2.75rem; line-height: 1.08; font-weight: 760; text-shadow: 0 2px 18px rgba(0,0,0,.9); }
+  .hero-copy { max-width: 620px; margin: 12px auto 0; color: #d5dae2; font-size: 1rem; line-height: 1.55; text-shadow: 0 2px 12px rgba(0,0,0,.95); }
+
+  .state-band { border-bottom: 1px solid var(--border); background: #0e1116; }
+  .state-inner { width: min(1180px, calc(100% - 40px)); margin: 0 auto; display: grid; grid-template-columns: 1.4fr repeat(4, 1fr); min-height: 116px; }
+  .state-intro, .metric { display: flex; flex-direction: column; justify-content: center; padding: 18px 22px; border-right: 1px solid var(--border); }
+  .metric:last-child { border-right: none; }
+  .state-intro strong { font-size: 0.875rem; }
+  .state-intro span, .metric span { margin-top: 5px; color: var(--muted); font-size: 0.72rem; line-height: 1.4; }
+  .metric b { font-size: 1.65rem; font-weight: 740; }
+  .metric.blue b { color: var(--blue); }
+  .metric.green b { color: var(--green); }
+  .metric.amber b { color: var(--amber); }
+
+  .section { width: min(1180px, calc(100% - 40px)); margin: 0 auto; padding: 64px 0; }
+  .section-head { display: flex; align-items: end; justify-content: space-between; gap: 24px; margin-bottom: 28px; }
+  h2 { font-size: 1.55rem; font-weight: 720; }
+  .section-head p { max-width: 560px; color: var(--muted); font-size: 0.875rem; line-height: 1.55; }
+
+  .flow { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+  .agent-node { position: relative; min-height: 190px; padding: 24px 20px; border-right: 1px solid var(--border); background: var(--surface); }
+  .agent-node:last-child { border-right: none; }
+  .agent-index { display: grid; place-items: center; width: 34px; height: 34px; margin-bottom: 28px; border: 1px solid var(--blue); border-radius: 6px; color: #9dbbf7; font-family: ui-monospace, "SFMono-Regular", monospace; font-size: 0.75rem; }
+  .agent-node:nth-child(2) .agent-index, .agent-node:nth-child(4) .agent-index { border-color: var(--green); color: #8ae7c8; }
+  .agent-node:nth-child(3) .agent-index { border-color: var(--amber); color: #f5c67e; }
+  .agent-node h3 { font-size: 0.9rem; }
+  .agent-node p { margin-top: 7px; color: var(--muted); font-size: 0.75rem; line-height: 1.55; }
+  .agent-node::after { content: ""; position: absolute; top: 40px; right: -5px; z-index: 1; width: 8px; height: 8px; border-top: 1px solid var(--blue); border-right: 1px solid var(--blue); transform: rotate(45deg); background: var(--surface); }
+  .agent-node:last-child::after { display: none; }
+
+  .evidence-band { background: #0d1014; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+  .evidence-inner { width: min(1180px, calc(100% - 40px)); margin: 0 auto; padding: 48px 0; display: grid; grid-template-columns: 1fr 1fr; gap: 48px; }
+  .evidence-block h2 { font-size: 1.3rem; }
+  .evidence-list { margin-top: 20px; display: grid; grid-template-columns: 1fr 1fr; border-top: 1px solid var(--border); }
+  .evidence-item { min-height: 78px; padding: 16px 14px 14px 0; border-bottom: 1px solid var(--border); }
+  .evidence-item:nth-child(odd) { border-right: 1px solid var(--border); }
+  .evidence-item:nth-child(even) { padding-left: 14px; }
+  .evidence-item strong { display: block; font-size: 0.78rem; }
+  .evidence-item span { display: block; margin-top: 5px; color: var(--muted); font-size: 0.72rem; line-height: 1.4; }
+  .decision { display: grid; grid-template-columns: 1fr 48px 1fr; align-items: stretch; margin-top: 20px; }
+  .decision-state { padding: 20px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); }
+  .decision-state.conflict { border-color: rgba(244,173,66,.55); }
+  .decision-state.resolved { border-color: rgba(46,211,154,.5); }
+  .decision-state small { color: var(--muted); font-size: 0.68rem; text-transform: uppercase; }
+  .decision-state strong { display: block; margin-top: 8px; font-size: 0.9rem; }
+  .decision-state p { margin-top: 7px; color: var(--muted); font-size: 0.72rem; line-height: 1.45; }
+  .decision-arrow { display: grid; place-items: center; color: var(--blue); font-size: 1.1rem; }
+
+  footer { width: min(1180px, calc(100% - 40px)); margin: 0 auto; padding: 28px 0 40px; display: flex; justify-content: space-between; color: var(--muted); font-size: 0.72rem; }
+  footer a { color: #aabbd5; text-decoration: none; }
+
+  @media (max-width: 900px) {
+    .topbar { grid-template-columns: 1fr auto; height: auto; min-height: 68px; padding: 12px 18px; }
+    .view-tabs { grid-column: 1 / -1; grid-row: 2; width: 100%; }
+    .view-tabs a { flex: 1; }
+    .connection { grid-column: 2; grid-row: 1; }
+    .hero { min-height: 68vh; }
+    .hero-content { padding-top: 122px; }
+    h1 { font-size: 2rem; }
+    .state-inner { grid-template-columns: repeat(2, 1fr); }
+    .state-intro { grid-column: 1 / -1; border-bottom: 1px solid var(--border); }
+    .metric:nth-child(3), .metric:nth-child(5) { border-right: none; }
+    .flow { grid-template-columns: 1fr 1fr; }
+    .agent-node { border-bottom: 1px solid var(--border); }
+    .agent-node:nth-child(even) { border-right: none; }
+    .agent-node::after { display: none; }
+    .agent-node:last-child { grid-column: 1 / -1; }
+    .evidence-inner { grid-template-columns: 1fr; gap: 42px; }
+  }
+  @media (max-width: 560px) {
+    .connection span:last-child { display: none; }
+    .hero { min-height: 64vh; }
+    .hero-image { object-position: center; }
+    .hero-content { padding-top: 128px; }
+    h1 { font-size: 1.75rem; }
+    .hero-copy { font-size: 0.875rem; }
+    .state-inner { grid-template-columns: 1fr 1fr; }
+    .section { padding: 48px 0; }
+    .section-head { align-items: flex-start; flex-direction: column; }
+    .flow { grid-template-columns: 1fr; }
+    .agent-node { min-height: 146px; border-right: none; }
+    .agent-node:last-child { grid-column: auto; }
+    .agent-index { margin-bottom: 18px; }
+    .evidence-list { grid-template-columns: 1fr; }
+    .evidence-item, .evidence-item:nth-child(odd), .evidence-item:nth-child(even) { border-right: none; padding-left: 0; }
+    .decision { grid-template-columns: 1fr; gap: 10px; }
+    .decision-arrow { transform: rotate(90deg); }
+    footer { align-items: flex-start; flex-direction: column; gap: 8px; }
+  }
+</style>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/"><span>Knowledge</span> Mesh</a>
+    <nav class="view-tabs" aria-label="Views">
+      <a href="/">Dashboard</a>
+      <a class="active" href="/architecture">Architecture</a>
+    </nav>
+    <div class="connection"><span class="connection-dot" id="connectionDot"></span><span id="connectionText">connecting</span></div>
+  </header>
+
+  <main>
+    <section class="hero" aria-labelledby="pageTitle">
+      <img class="hero-image" src="/assets/knowledge-mesh-architecture.png" alt="Knowledge Mesh agents coordinating evidence, conflicts, and audited resolutions">
+      <div class="hero-shade"></div>
+      <div class="hero-content">
+        <div class="eyebrow">Band-native multi-agent system</div>
+        <h1 id="pageTitle">A2A Knowledge Mesh</h1>
+        <p class="hero-copy">Specialized agents collect evidence, preserve structured knowledge, reconcile contradictions, and keep every decision auditable.</p>
+      </div>
+    </section>
+
+    <section class="state-band" aria-label="Current mesh state">
+      <div class="state-inner">
+        <div class="state-intro"><strong>Current mesh state</strong><span>Live values from the same stores that power the operational dashboard.</span></div>
+        <div class="metric blue"><b id="agentCount">0</b><span>registered agents</span></div>
+        <div class="metric green"><b id="factCount">0</b><span>facts stored</span></div>
+        <div class="metric amber"><b id="conflictCount">0</b><span>open conflicts</span></div>
+        <div class="metric green"><b id="resolvedCount">0</b><span>resolved decisions</span></div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <h2>Collaboration flow</h2>
+        <p>Band carries the handoffs between specialized agents. SQLite preserves facts and decisions; the Bridge exposes the work as a live, persistent audit trail.</p>
+      </div>
+      <div class="flow">
+        <article class="agent-node"><div class="agent-index">01</div><h3>Scraper</h3><p>Extracts evidence from repositories, documentation, CI, and configuration.</p></article>
+        <article class="agent-node"><div class="agent-index">02</div><h3>Keeper</h3><p>Stores RDF-lite facts with provenance and detects contradictory values.</p></article>
+        <article class="agent-node"><div class="agent-index">03</div><h3>Reconciler</h3><p>Reviews conflicts, scores severity, and proposes a source of truth.</p></article>
+        <article class="agent-node"><div class="agent-index">04</div><h3>Registry</h3><p>Maps capabilities and routes work to the right specialized agent.</p></article>
+        <article class="agent-node"><div class="agent-index">05</div><h3>Bridge</h3><p>Mirrors room activity and local state into the dashboard and audit history.</p></article>
+      </div>
+    </section>
+
+    <section class="evidence-band">
+      <div class="evidence-inner">
+        <div class="evidence-block">
+          <h2>Evidence enters with provenance</h2>
+          <div class="evidence-list">
+            <div class="evidence-item"><strong>Code repositories</strong><span>Runtime behavior, imports, dependencies, implementation.</span></div>
+            <div class="evidence-item"><strong>Documentation</strong><span>Architecture decisions, setup guides, operating policy.</span></div>
+            <div class="evidence-item"><strong>CI pipelines</strong><span>Test matrices, release gates, deployment environments.</span></div>
+            <div class="evidence-item"><strong>Configuration</strong><span>Versions, providers, feature flags, infrastructure state.</span></div>
+          </div>
+        </div>
+        <div class="evidence-block">
+          <h2>Contradiction becomes decision</h2>
+          <div class="decision">
+            <div class="decision-state conflict"><small>Conflict</small><strong>Python 3.9 vs ≥3.11</strong><p>README and executable project metadata disagree.</p></div>
+            <div class="decision-arrow">→</div>
+            <div class="decision-state resolved"><small>Resolved</small><strong>pyproject.toml wins</strong><p>The decision, reason, confidence, and audit timestamp are preserved.</p></div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer><span>A2A Knowledge Mesh</span><a href="/">Open live dashboard</a></footer>
+
+<script>
+const connectionDot = document.getElementById('connectionDot');
+const connectionText = document.getElementById('connectionText');
+
+async function refreshState() {
+  try {
+    const [statusResponse, metricsResponse] = await Promise.all([
+      fetch('/status'),
+      fetch('/metrics')
+    ]);
+    const status = await statusResponse.json();
+    const metrics = await metricsResponse.json();
+    const agents = metrics.registered_agents || [];
+
+    document.getElementById('agentCount').textContent = agents.length;
+    document.getElementById('factCount').textContent = metrics.facts_stored ?? status.facts_stored ?? 0;
+    document.getElementById('conflictCount').textContent = status.conflicts ?? metrics.conflicts_open ?? 0;
+    document.getElementById('resolvedCount').textContent = status.resolved ?? metrics.conflicts_resolved ?? 0;
+
+    const bridgeState = status.bridge_status || (status.ok ? 'connected' : 'offline');
+    connectionText.textContent = bridgeState;
+    connectionDot.className = bridgeState === 'connected' ? 'connection-dot on' : 'connection-dot off';
+  } catch (error) {
+    connectionText.textContent = 'offline';
+    connectionDot.className = 'connection-dot off';
+  }
+}
+
+refreshState();
+setInterval(refreshState, 5000);
+</script>
+</body>
+</html>
