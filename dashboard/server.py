@@ -22,6 +22,8 @@ import sqlite3
 BRIDGE_URL = os.getenv("BRIDGE_URL", "http://127.0.0.1:8765")
 PORT = int(os.getenv("DASHBOARD_PORT", "8766"))
 HTML_PATH = Path(__file__).parent / "index.html"
+ARCHITECTURE_PATH = Path(__file__).parent / "architecture.html"
+ARCHITECTURE_IMAGE_PATH = Path(__file__).parent / "assets" / "knowledge-mesh-architecture.png"
 
 
 def _get_db_metrics() -> dict:
@@ -119,12 +121,34 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(raw)
 
+    def _bytes(self, code: int, body: bytes, content_type: str) -> None:
+        self.send_response(code)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "public, max-age=3600")
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_GET(self) -> None:
         if self.path == "/" or self.path == "/index.html":
             if HTML_PATH.exists():
                 self._html(200, HTML_PATH.read_text())
             else:
                 self._html(200, "<h1>Dashboard</h1><p>index.html not found</p>")
+            return
+
+        if self.path in {"/architecture", "/architecture.html"}:
+            if ARCHITECTURE_PATH.exists():
+                self._html(200, ARCHITECTURE_PATH.read_text())
+            else:
+                self._html(404, "<h1>Architecture</h1><p>architecture.html not found</p>")
+            return
+
+        if self.path == "/assets/knowledge-mesh-architecture.png":
+            if ARCHITECTURE_IMAGE_PATH.exists():
+                self._bytes(200, ARCHITECTURE_IMAGE_PATH.read_bytes(), "image/png")
+            else:
+                self._json(404, {"error": "architecture image not found"})
             return
 
         if self.path.startswith("/events"):
