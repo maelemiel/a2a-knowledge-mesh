@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import sqlite3
 import time
 import uuid
 from pathlib import Path
@@ -47,8 +48,6 @@ class ReconcilerStore:
     """SQLite store for conflicts with AI suggestion columns."""
 
     def __init__(self, db_path: str = str(DB_PATH)) -> None:
-        import sqlite3
-
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(db_path, timeout=10, check_same_thread=False)
         self.conn.execute("PRAGMA foreign_keys=ON")
@@ -245,7 +244,7 @@ class ReconcilerStore:
             "SELECT id, subject, predicate, fact_a_id, fact_b_id, source_a, source_b, "
             "band_room_id, created_at, ai_suggested_fact_id, ai_reason, "
             "semantic_confidence, severity, score_confidence, auto_resolved "
-            "FROM conflicts WHERE status='open' ORDER BY created_at DESC"
+            "FROM conflicts WHERE status='open' ORDER BY created_at DESC, id ASC"
         ).fetchall()
         keys = [
             "conflict_id",
@@ -265,6 +264,111 @@ class ReconcilerStore:
             "auto_resolved",
         ]
         return [dict(zip(keys, r)) for r in rows]
+
+    def list_open_conflicts(self) -> list[dict]:
+        """Return all open conflicts in deterministic display order."""
+        return self.get_open()
+
+    def resolve_all(self, strategy: str = "ai") -> dict:
+        """Resolve every open conflict supported by a safe bulk strategy.
+
+        The AI strategy only accepts a suggested fact that belongs to the
+        conflict pair. Missing or invalid suggestions are reported and skipped.
+        Each update is committed independently so one failure does not hide
+        successful resolutions for other conflicts.
+        """
+        normalized_strategy = strategy.strip().lower() or "ai"
+        supported = {"ai"}
+        if normalized_strategy not in supported:
+            raise ValueError(
+                f"Unsupported resolve-all strategy: {normalized_strategy}. "
+                f"Supported strategies: {', '.join(sorted(supported))}"
+            )
+
+        open_conflicts = self.list_open_conflicts()
+        details: list[dict] = []
+        resolved = 0
+        skipped = 0
+        failed = 0
+
+        for conflict in open_conflicts:
+            conflict_id = conflict["conflict_id"]
+            suggestion = conflict.get("ai_suggested_fact_id")
+            valid_fact_ids = {conflict["fact_a_id"], conflict["fact_b_id"]}
+
+            if not isinstance(suggestion, int) or isinstance(suggestion, bool):
+                skipped += 1
+                details.append({
+                    "conflict_id": conflict_id,
+                    "subject": conflict["subject"],
+                    "predicate": conflict["predicate"],
+                    "outcome": "skipped",
+                    "reason": "no AI suggestion available",
+                })
+                continue
+
+            if suggestion not in valid_fact_ids:
+                skipped += 1
+                details.append({
+                    "conflict_id": conflict_id,
+                    "subject": conflict["subject"],
+                    "predicate": conflict["predicate"],
+                    "outcome": "skipped",
+                    "reason": f"AI suggestion fact #{suggestion} is not part of this conflict",
+                })
+                continue
+
+            reason = "Bulk resolve-all ai: " + (
+                conflict.get("ai_reason") or "applied AI recommendation"
+            )
+            try:
+                cursor = self.conn.execute(
+                    "UPDATE conflicts SET status='resolved', resolution_fact_id=?, "
+                    "resolution_reason=?, resolved_at=? "
+                    "WHERE id=? AND status='open'",
+                    (suggestion, reason, int(time.time()), conflict_id),
+                )
+                self.conn.commit()
+                if cursor.rowcount != 1:
+                    skipped += 1
+                    details.append({
+                        "conflict_id": conflict_id,
+                        "subject": conflict["subject"],
+                        "predicate": conflict["predicate"],
+                        "outcome": "skipped",
+                        "reason": "conflict is no longer open",
+                    })
+                    continue
+            except sqlite3.Error as exc:
+                self.conn.rollback()
+                failed += 1
+                details.append({
+                    "conflict_id": conflict_id,
+                    "subject": conflict["subject"],
+                    "predicate": conflict["predicate"],
+                    "outcome": "failed",
+                    "reason": str(exc),
+                })
+                continue
+
+            resolved += 1
+            details.append({
+                "conflict_id": conflict_id,
+                "subject": conflict["subject"],
+                "predicate": conflict["predicate"],
+                "outcome": "resolved",
+                "fact_id": suggestion,
+                "reason": reason,
+            })
+
+        return {
+            "strategy": normalized_strategy,
+            "total_open": len(open_conflicts),
+            "resolved": resolved,
+            "skipped": skipped,
+            "failed": failed,
+            "details": details,
+        }
 
     def get_all(self) -> list[dict]:
         rows = self.conn.execute(

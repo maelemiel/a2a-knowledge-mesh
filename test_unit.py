@@ -868,5 +868,184 @@ class TestDashboardAnalytics(unittest.TestCase):
             self.assertEqual(analytics["conflicts"][1]["detected_after_messages"], 3)
 
 
+class TestReconcilerBandRouting(unittest.TestCase):
+    """Keeper handoffs should trigger conflict analysis despite mention formatting."""
+
+    def test_structured_handoff_is_recognized_as_detect_request(self):
+        from agents.reconciler_band import _is_detect_request
+
+        self.assertTrue(_is_detect_request("detect"))
+        self.assertTrue(_is_detect_request("detect — 6 conflict candidate(s)"))
+        self.assertTrue(_is_detect_request(
+            "@eliott.raguin/reconciler handoff: conflict.detected\n"
+            '{"type": "conflict.detected", "subject": "runtime"}'
+        ))
+        self.assertFalse(_is_detect_request("status"))
+
+
+class TestReconcilerResolveAll(unittest.TestCase):
+    """Bulk resolution must only apply safe AI recommendations to open conflicts."""
+
+    def setUp(self):
+        from agents.reconciler import ReconcilerStore
+
+        self.tmp = tempfile.TemporaryDirectory()
+        self.store = ReconcilerStore(str(Path(self.tmp.name) / "reconciler.db"))
+
+    def tearDown(self):
+        self.store.close()
+        self.tmp.cleanup()
+
+    def _create(
+        self,
+        fact_a_id: int,
+        fact_b_id: int,
+        ai_fact_id: int | None,
+    ) -> dict:
+        return self.store.create(
+            subject=f"subject-{fact_a_id}",
+            predicate="version",
+            fact_a_id=fact_a_id,
+            fact_b_id=fact_b_id,
+            source_a="docs",
+            source_b="code",
+            ai_fact_id=ai_fact_id,
+            ai_reason="code is executable evidence" if ai_fact_id else None,
+        )
+
+    def test_no_open_conflicts_returns_empty_summary(self):
+        result = self.store.resolve_all()
+
+        self.assertEqual(result["strategy"], "ai")
+        self.assertEqual(result["total_open"], 0)
+        self.assertEqual(result["resolved"], 0)
+        self.assertEqual(result["skipped"], 0)
+        self.assertEqual(result["failed"], 0)
+        self.assertEqual(result["details"], [])
+
+    def test_multiple_open_conflicts_use_valid_ai_suggestions(self):
+        first = self._create(10, 11, 11)
+        second = self._create(20, 21, 20)
+
+        result = self.store.resolve_all("ai")
+
+        self.assertEqual(result["total_open"], 2)
+        self.assertEqual(result["resolved"], 2)
+        self.assertEqual(result["skipped"], 0)
+        self.assertEqual(result["failed"], 0)
+        self.assertEqual(self.store.get_open(), [])
+        resolved = {item["conflict_id"]: item for item in self.store.get_all()}
+        self.assertEqual(resolved[first["conflict_id"]]["resolution_fact_id"], 11)
+        self.assertEqual(resolved[second["conflict_id"]]["resolution_fact_id"], 20)
+
+    def test_missing_and_invalid_ai_suggestions_are_skipped(self):
+        missing = self._create(30, 31, None)
+        invalid = self._create(40, 41, 999)
+
+        result = self.store.resolve_all("ai")
+
+        self.assertEqual(result["total_open"], 2)
+        self.assertEqual(result["resolved"], 0)
+        self.assertEqual(result["skipped"], 2)
+        self.assertEqual(result["failed"], 0)
+        skipped_ids = {item["conflict_id"] for item in result["details"]}
+        self.assertEqual(skipped_ids, {missing["conflict_id"], invalid["conflict_id"]})
+        self.assertEqual(len(self.store.get_open()), 2)
+
+    def test_already_resolved_conflict_is_ignored(self):
+        conflict = self._create(50, 51, 51)
+        self.store.resolve(conflict["conflict_id"], 50, "manual decision")
+
+        result = self.store.resolve_all()
+
+        self.assertEqual(result["total_open"], 0)
+        self.assertEqual(result["resolved"], 0)
+        stored = self.store.get_all()[0]
+        self.assertEqual(stored["resolution_fact_id"], 50)
+        self.assertEqual(stored["resolution_reason"], "manual decision")
+
+    def test_invalid_strategy_is_rejected_without_changes(self):
+        self._create(60, 61, 61)
+
+        with self.assertRaisesRegex(ValueError, "Supported strategies: ai"):
+            self.store.resolve_all("newest")
+
+        self.assertEqual(len(self.store.get_open()), 1)
+
+
+class TestReconcilerResolveAllBandCommand(unittest.IsolatedAsyncioTestCase):
+    """The Band adapter should route resolve-all and post an auditable summary."""
+
+    async def test_handle_message_routes_resolve_all_strategy(self):
+        from agents.reconciler_band import ReconcilerAgent
+
+        agent = ReconcilerAgent.__new__(ReconcilerAgent)
+        agent._cmd_resolve_all = unittest.mock.AsyncMock()
+        msg = unittest.mock.MagicMock(content="resolve-all ai")
+
+        await agent.handle_message(msg, unittest.mock.MagicMock(), "room-1")
+
+        agent._cmd_resolve_all.assert_awaited_once_with("ai", unittest.mock.ANY)
+
+    async def test_command_posts_counts_and_per_conflict_details(self):
+        from agents.reconciler_band import ReconcilerAgent
+
+        agent = ReconcilerAgent.__new__(ReconcilerAgent)
+        agent.store = unittest.mock.MagicMock()
+        agent.store.resolve_all.return_value = {
+            "strategy": "ai",
+            "total_open": 2,
+            "resolved": 1,
+            "skipped": 1,
+            "failed": 0,
+            "details": [
+                {
+                    "conflict_id": "abc123",
+                    "subject": "runtime",
+                    "predicate": "version",
+                    "outcome": "resolved",
+                    "fact_id": 12,
+                    "reason": "AI recommendation",
+                },
+                {
+                    "conflict_id": "def456",
+                    "subject": "auth",
+                    "predicate": "provider",
+                    "outcome": "skipped",
+                    "reason": "no AI suggestion available",
+                },
+            ],
+        }
+        tools = unittest.mock.MagicMock()
+        tools.send_message = unittest.mock.AsyncMock()
+
+        await agent._cmd_resolve_all("", tools)
+
+        message = tools.send_message.await_args.args[0]
+        self.assertIn("Open conflicts: 2", message)
+        self.assertIn("Resolved: 1", message)
+        self.assertIn("Skipped: 1", message)
+        self.assertIn("Failed: 0", message)
+        self.assertIn("`abc123` runtime (version) → fact #12", message)
+        self.assertIn("`def456` auth (provider): no AI suggestion available", message)
+
+    async def test_invalid_strategy_posts_clear_error(self):
+        from agents.reconciler_band import ReconcilerAgent
+
+        agent = ReconcilerAgent.__new__(ReconcilerAgent)
+        agent.store = unittest.mock.MagicMock()
+        agent.store.resolve_all.side_effect = ValueError(
+            "Unsupported resolve-all strategy: newest. Supported strategies: ai"
+        )
+        tools = unittest.mock.MagicMock()
+        tools.send_message = unittest.mock.AsyncMock()
+
+        await agent._cmd_resolve_all("newest", tools)
+
+        message = tools.send_message.await_args.args[0]
+        self.assertIn("Unsupported resolve-all strategy: newest", message)
+        self.assertIn("Supported strategies: ai", message)
+
+
 if __name__ == "__main__":
     unittest.main()

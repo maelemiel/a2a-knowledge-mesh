@@ -8,6 +8,7 @@ Commands:
   @reconciler status          → show open/closed conflicts with AI suggestions
   @reconciler clear           → clear recorded conflicts for a fresh demo
   @reconciler resolve <id> <fact_id> [reason]  → record resolution
+  @reconciler resolve-all [ai] → safely apply AI suggestions to all open conflicts
 """
 
 from __future__ import annotations
@@ -34,6 +35,16 @@ from agents.reconciler import (
 logger = logging.getLogger(__name__)
 
 
+def _is_detect_request(content: str) -> bool:
+    """Recognize direct commands and structured Keeper handoffs."""
+    normalized = content.strip()
+    return (
+        normalized.startswith("detect")
+        or "handoff: conflict.detected" in normalized
+        or '"type": "conflict.detected"' in normalized
+    )
+
+
 # ---------------------------------------------------------------------------
 # Agent
 # ---------------------------------------------------------------------------
@@ -41,7 +52,9 @@ logger = logging.getLogger(__name__)
 
 class ReconcilerAgent(BandAgent):
     agent_name = "Reconciler"
-    agent_description = "Conflict resolver with AI suggestions. Commands: detect, status, resolve"
+    agent_description = (
+        "Conflict resolver with AI suggestions. Commands: detect, status, resolve, resolve-all"
+    )
 
     def __init__(self, keeper_db: str = "", **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -63,7 +76,7 @@ class ReconcilerAgent(BandAgent):
     ) -> None:
         content = msg.content.strip()
 
-        if content.startswith("detect"):
+        if _is_detect_request(content):
             await self._cmd_detect(tools)
             return
 
@@ -75,6 +88,10 @@ class ReconcilerAgent(BandAgent):
             await self._cmd_clear(tools)
             return
 
+        if content == "resolve-all" or content.startswith("resolve-all "):
+            await self._cmd_resolve_all(content[len("resolve-all"):].strip(), tools)
+            return
+
         if content.startswith("resolve "):
             await self._cmd_resolve(content[8:], tools)
             return
@@ -84,6 +101,7 @@ class ReconcilerAgent(BandAgent):
             "  `detect`            → scan Keeper DB, AI suggests winner\n"
             "  `status`            → show open/closed conflicts\n"
             "  `clear`             → clear recorded conflict history\n"
+            "  `resolve-all [ai]`  → apply valid AI suggestions to every open conflict\n"
             "  `resolve <id> <fact> [reason]`  → record a resolution"
         )
 
@@ -318,6 +336,51 @@ class ReconcilerAgent(BandAgent):
     async def _cmd_clear(self, tools: AgentToolsProtocol) -> None:
         count = self.store.clear()
         await tools.send_message(f"🗑️ Cleared {count} recorded conflict(s)")
+
+    async def _cmd_resolve_all(
+        self,
+        args: str,
+        tools: AgentToolsProtocol,
+    ) -> None:
+        parts = args.split()
+        if len(parts) > 1:
+            await tools.send_message("⚠️ Usage: `resolve-all [ai]`")
+            return
+
+        strategy = parts[0].lower() if parts else "ai"
+        try:
+            result = self.store.resolve_all(strategy)
+        except ValueError as exc:
+            await tools.send_message(f"❌ {exc}")
+            return
+
+        lines = [
+            f"✅ Bulk resolution completed (`{result['strategy']}`)",
+            "",
+            f"Open conflicts: {result['total_open']}",
+            f"Resolved: {result['resolved']}",
+            f"Skipped: {result['skipped']}",
+            f"Failed: {result['failed']}",
+        ]
+
+        if result["details"]:
+            lines.append("")
+            lines.append("Details:")
+            for detail in result["details"]:
+                label = (
+                    f"`{detail['conflict_id']}` "
+                    f"{detail['subject']} ({detail['predicate']})"
+                )
+                if detail["outcome"] == "resolved":
+                    lines.append(f"- ✅ {label} → fact #{detail['fact_id']}")
+                elif detail["outcome"] == "skipped":
+                    lines.append(f"- ⏭️ {label}: {detail['reason']}")
+                else:
+                    lines.append(f"- ❌ {label}: {detail['reason']}")
+        else:
+            lines.extend(["", "No open conflicts to resolve."])
+
+        await tools.send_message("\n".join(lines))
 
     async def _cmd_resolve(self, args: str, tools: AgentToolsProtocol) -> None:
         parts = args.strip().split(None, 2)

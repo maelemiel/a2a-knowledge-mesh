@@ -60,6 +60,7 @@ In the Band room:
 @Registry demo
 @Reconciler detect
 @Reconciler status
+@Reconciler resolve-all
 @Reconciler resolve <conflict_id> <fact_id> pyproject is executable source of truth
 ```
 
@@ -84,6 +85,15 @@ Manual fallback:
 @Reconciler detect
 @Reconciler status
 ```
+
+Bulk resolution uses the safe `ai` strategy by default:
+
+```text
+@Reconciler resolve-all
+@Reconciler resolve-all ai
+```
+
+Only open conflicts with a valid `ai_suggested_fact_id` from their own fact pair are resolved. Missing or invalid suggestions are reported as skipped.
 
 For repo scanning:
 

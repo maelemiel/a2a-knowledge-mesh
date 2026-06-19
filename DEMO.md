@@ -33,7 +33,14 @@ Show the handoff and AI review:
 @Reconciler status
 ```
 
-Resolve one conflict:
+Resolve every conflict with a valid AI recommendation:
+
+```text
+@Reconciler resolve-all
+@Reconciler status
+```
+
+Or resolve one conflict manually:
 
 ```text
 @Reconciler resolve <conflict_id> <winning_fact_id> pyproject is executable source of truth
@@ -85,7 +92,7 @@ The Scraper extracts structured facts from the repository and hands them to Keep
 @Registry demo
 @Reconciler detect
 @Reconciler status
-@Reconciler resolve <conflict_id> <winning_fact_id> pyproject is source of truth
+@Reconciler resolve-all
 ```
 
 Narration: “Instead of asking one agent for an answer, specialized agents coordinate in Band. Keeper stores evidence, Reconciler reviews contradictions, and the dashboard keeps an audit trail.”

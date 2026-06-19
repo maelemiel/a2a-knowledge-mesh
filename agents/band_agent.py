@@ -274,7 +274,7 @@ class BandAgent(SimpleAdapter[Any]):
                     skills = {
                         "keeper": "store,store-batch,recall,list,detect,clear,reset-demo,seed-demo,get",
                         "registry": "register,discover,list,demo,reset-demo",
-                        "reconciler": "detect,status,resolve,clear",
+                        "reconciler": "detect,status,resolve,resolve-all,clear",
                         "scraper": "scan,status",
                         "bridge": "dashboard,history,timeline",
                     }.get(agent_key, "unknown")
