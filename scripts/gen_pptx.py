@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Generate A2A Knowledge Mesh pitch deck (.pptx)."""
 
+from pathlib import Path
+
 from pptx import Presentation
 from pptx.util import Inches, Pt
 from pptx.dml.color import RGBColor
@@ -196,7 +198,8 @@ def architecture(slide):
                  "Collaborative Multi-Agent Flow", size=24, color=WHITE, bold=True)
 
     # Add the beautiful infographic image showing explanations of each agent
-    image_path = "/home/mael/mael/Dev/band/a2a-knowledge-mesh/docs/five_agents_workflow.jpg"
+    script_dir = Path(__file__).resolve().parent
+    image_path = str(script_dir.parent / "docs" / "five_agents_workflow.jpg")
     try:
         slide.shapes.add_picture(image_path, Inches(0.8), Inches(1.8), Inches(8.0), Inches(4.5))
     except Exception:
@@ -458,7 +461,8 @@ def main():
         slide = prs.slides.add_slide(prs.slide_layouts[6])  # blank
         builder(slide)
 
-    out = "/home/mael/mael/Dev/band/a2a-knowledge-mesh/A2A_Knowledge_Mesh_Deck.pptx"
+    repo_root = Path(__file__).resolve().parent.parent
+    out = str(repo_root / "A2A_Knowledge_Mesh_Deck.pptx")
     prs.save(out)
     print(f"✅ Saved: {out}")
     print(f"   Slides: {len(slides_builders)}")

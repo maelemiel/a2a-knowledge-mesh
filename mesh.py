@@ -962,6 +962,7 @@ def cmd_graphify(output_path: str = "") -> None:
 
     added_subjects = set()
     added_objects = {}  # key: (subject, predicate, object_value) -> node_id
+    nodes_map = {}      # key: node_id -> list_index
 
     for f in facts:
         sub = f["subject"]
@@ -982,8 +983,10 @@ def cmd_graphify(output_path: str = "") -> None:
                 }
                 shadow = {"enabled": True, "color": "rgba(59, 130, 246, 0.2)", "size": 8}
 
+            node_id = f"s:{sub}"
+            nodes_map[node_id] = len(nodes)
             nodes.append({
-                "id": f"s:{sub}",
+                "id": node_id,
                 "label": sub,
                 "nodeType": "subject",
                 "color": color,
@@ -1023,6 +1026,7 @@ def cmd_graphify(output_path: str = "") -> None:
                 group = "object"
                 size = 18
 
+            nodes_map[obj_node_id] = len(nodes)
             nodes.append({
                 "id": obj_node_id,
                 "label": obj,
@@ -1038,7 +1042,7 @@ def cmd_graphify(output_path: str = "") -> None:
             })
             added_objects[obj_key] = obj_node_id
 
-        node_idx = next(i for i, n in enumerate(nodes) if n["id"] == added_objects[obj_key])
+        node_idx = nodes_map[added_objects[obj_key]]
         nodes[node_idx]["facts"].append(f)
 
     # Add edges (grouped by subject, predicate, object)
