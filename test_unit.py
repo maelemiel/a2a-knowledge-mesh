@@ -469,6 +469,31 @@ class TestBridgeDashboardState(unittest.TestCase):
             finally:
                 bridge.KEEPER_DB = old_keeper
                 bridge.RECONCILER_DB = old_reconciler
+
+    def test_persistent_history_deduplicates_replayed_events(self):
+        import agents.bridge_agent as bridge
+
+        with tempfile.TemporaryDirectory() as tmp:
+            old_bridge_db = bridge.BRIDGE_DB
+            bridge.BRIDGE_DB = Path(tmp) / "bridge.db"
+            try:
+                event = bridge.Event(
+                    "message",
+                    "@Keeper detect",
+                    sender_id="user-1",
+                    sender_name="Eliott",
+                    timestamp="2026-06-19T12:00:00+00:00",
+                )
+                bridge.append_history(event)
+                bridge.append_history(event)
+                history = bridge.get_history()
+            finally:
+                bridge.BRIDGE_DB = old_bridge_db
+
+            self.assertEqual(len(history), 1)
+            self.assertEqual(history[0]["content"], "@Keeper detect")
+
+
 class TestBandDemoSeed(unittest.TestCase):
     """The deterministic hackathon demo should always produce conflicts."""
 
@@ -765,6 +790,82 @@ class TestLlmProvider(unittest.IsolatedAsyncioTestCase):
         p = Provider(max_retries=1)
         res = await p.chat_completion("sys", "user", config=config, parse_json=True)
         self.assertIsNone(res)
+
+
+class TestDashboardAnalytics(unittest.TestCase):
+    """Analytics should correlate persistent Band messages with Reconciler decisions."""
+
+    def test_conflicts_are_counted_at_detection_and_resolution_message_positions(self):
+        import dashboard.server as dashboard_server
+
+        with tempfile.TemporaryDirectory() as tmp:
+            data_path = Path(tmp)
+            bridge_db = data_path / "bridge.db"
+            reconciler_db = data_path / "reconciler.db"
+
+            conn = sqlite3.connect(bridge_db)
+            conn.execute("""
+                CREATE TABLE events (
+                    id INTEGER PRIMARY KEY,
+                    type TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    sender_name TEXT,
+                    timestamp TEXT NOT NULL
+                )
+            """)
+            conn.executemany(
+                "INSERT INTO events VALUES (?, 'message', ?, ?, ?)",
+                [
+                    (1, "first", "User", "1970-01-01T00:00:50+00:00"),
+                    (2, "second", "Keeper", "1970-01-01T00:02:30+00:00"),
+                    (3, "third", "Reconciler", "1970-01-01T00:04:10+00:00"),
+                ],
+            )
+            conn.commit()
+            conn.close()
+
+            conn = sqlite3.connect(reconciler_db)
+            conn.execute("""
+                CREATE TABLE conflicts (
+                    id TEXT PRIMARY KEY,
+                    subject TEXT NOT NULL,
+                    predicate TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    resolved_at INTEGER,
+                    resolution_fact_id INTEGER,
+                    resolution_reason TEXT,
+                    severity TEXT,
+                    score_confidence REAL
+                )
+            """)
+            conn.executemany(
+                "INSERT INTO conflicts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [
+                    ("resolved-1", "runtime", "python", "resolved", 200, 300,
+                     2, "code wins", "high", 0.9),
+                    ("open-1", "auth", "provider", "open", 400, None,
+                     None, None, "medium", 0.7),
+                ],
+            )
+            conn.commit()
+            conn.close()
+
+            old_data_path = dashboard_server.DATA_PATH
+            dashboard_server.DATA_PATH = data_path
+            try:
+                analytics = dashboard_server._get_analytics_data()
+            finally:
+                dashboard_server.DATA_PATH = old_data_path
+
+            self.assertEqual(analytics["summary"]["messages"], 3)
+            self.assertEqual(analytics["summary"]["detected"], 2)
+            self.assertEqual(analytics["summary"]["resolved"], 1)
+            self.assertEqual(analytics["summary"]["open"], 1)
+            self.assertEqual(analytics["summary"]["resolution_rate"], 50.0)
+            self.assertEqual(analytics["conflicts"][0]["detected_after_messages"], 2)
+            self.assertEqual(analytics["conflicts"][0]["resolved_after_messages"], 3)
+            self.assertEqual(analytics["conflicts"][1]["detected_after_messages"], 3)
 
 
 if __name__ == "__main__":

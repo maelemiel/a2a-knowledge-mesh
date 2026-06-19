@@ -27,6 +27,7 @@ from typing import Any
 
 from dotenv import load_dotenv
 from band import BandLink, RoomPresence
+from band.client.rest import DEFAULT_REQUEST_OPTIONS
 from band.platform.event import MessageEvent, ParticipantAddedEvent, ParticipantRemovedEvent
 
 load_dotenv(Path(__file__).parent.parent / ".env")
@@ -109,14 +110,22 @@ def append_history(event: Event) -> None:
     data = event.to_dict()
     conn = _history_conn()
     try:
+        values = (
+            data["type"],
+            data["content"],
+            data["sender_id"],
+            data["sender_name"],
+            data["timestamp"],
+        )
         conn.execute(
             "INSERT INTO events (type, content, sender_id, sender_name, timestamp) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (
+            "SELECT ?, ?, ?, ?, ? WHERE NOT EXISTS ("
+            "SELECT 1 FROM events WHERE type = ? AND content = ? "
+            "AND COALESCE(sender_id, '') = COALESCE(?, '') AND timestamp = ?)",
+            values + (
                 data["type"],
                 data["content"],
                 data["sender_id"],
-                data["sender_name"],
                 data["timestamp"],
             ),
         )
@@ -546,6 +555,37 @@ class BridgeAgentAdapter:
         self._rest_url = os.getenv("BAND_REST_URL", "https://app.band.ai")
         self._ws_url = os.getenv("BAND_WS_URL", "wss://app.band.ai/api/v1/socket/websocket")
 
+    async def _backfill_messages(self, link: BandLink) -> int:
+        """Load existing room messages so analytics survive Bridge restarts."""
+        imported = 0
+        page = 1
+        total_pages = 1
+        while page <= total_pages and page <= 50:
+            response = await link.rest.agent_api_messages.list_agent_messages(
+                self._room_id,
+                status="all",
+                page=page,
+                page_size=100,
+                request_options=DEFAULT_REQUEST_OPTIONS,
+            )
+            for message in response.data:
+                timestamp = message.inserted_at
+                timestamp_text = timestamp.isoformat() if timestamp else None
+                push_event(
+                    Event(
+                        "message",
+                        message.content,
+                        sender_id=message.sender_id,
+                        sender_name=message.sender_name or message.sender_id,
+                        timestamp=timestamp_text,
+                    ),
+                    dedupe_key=f"band-message:{message.id}",
+                )
+                imported += 1
+            total_pages = response.metadata.total_pages or 1
+            page += 1
+        return imported
+
     async def run(self) -> None:
         """Listen to Band room events and mirror them to the dashboard buffer."""
         mirror_task = asyncio.create_task(LocalStateMirror().run())
@@ -608,6 +648,11 @@ class BridgeAgentAdapter:
             await presence.start()
             if self._room_id in presence.rooms:
                 set_bridge_status("connected")
+                try:
+                    imported = await self._backfill_messages(link)
+                    logger.info("Bridge imported %d Band room messages", imported)
+                except Exception as exc:
+                    logger.warning("Bridge message history import failed: %s", exc)
             else:
                 msg = (
                     "Bridge connected to Band, but this room was not found for the Bridge agent. "

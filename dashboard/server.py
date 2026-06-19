@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import os
 import urllib.request
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -23,7 +24,8 @@ BRIDGE_URL = os.getenv("BRIDGE_URL", "http://127.0.0.1:8765")
 PORT = int(os.getenv("DASHBOARD_PORT", "8766"))
 HTML_PATH = Path(__file__).parent / "index.html"
 ARCHITECTURE_PATH = Path(__file__).parent / "architecture.html"
-ARCHITECTURE_IMAGE_PATH = Path(__file__).parent / "assets" / "knowledge-mesh-architecture.png"
+ANALYTICS_PATH = Path(__file__).parent / "analytics.html"
+DATA_PATH = Path(__file__).parent.parent / "data"
 
 
 def _get_db_metrics() -> dict:
@@ -82,6 +84,103 @@ def _get_db_metrics() -> dict:
             pass
 
     return metrics
+
+
+def _iso_to_epoch(value: str) -> float | None:
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except (TypeError, ValueError):
+        return None
+
+
+def _get_analytics_data() -> dict:
+    """Join persistent messages with conflict detection and resolution timestamps."""
+    messages: list[dict[str, Any]] = []
+    workflow_events: list[dict[str, Any]] = []
+    conflicts: list[dict[str, Any]] = []
+
+    bridge_db = DATA_PATH / "bridge.db"
+    if bridge_db.exists():
+        try:
+            conn = sqlite3.connect(str(bridge_db), timeout=2)
+            rows = conn.execute(
+                "SELECT id, type, content, sender_name, timestamp "
+                "FROM events ORDER BY timestamp ASC, id ASC LIMIT 5000"
+            ).fetchall()
+            conn.close()
+            for event_id, event_type, content, sender_name, timestamp in rows:
+                event = {
+                    "id": event_id,
+                    "type": event_type,
+                    "content": content,
+                    "sender_name": sender_name,
+                    "timestamp": timestamp,
+                }
+                if event_type == "message":
+                    messages.append(event)
+                if event_type in {"conflict", "resolution"}:
+                    workflow_events.append(event)
+        except (sqlite3.Error, OSError):
+            pass
+
+    message_epochs = sorted(
+        epoch for epoch in (_iso_to_epoch(m["timestamp"]) for m in messages) if epoch is not None
+    )
+
+    reconciler_db = DATA_PATH / "reconciler.db"
+    if reconciler_db.exists():
+        try:
+            conn = sqlite3.connect(str(reconciler_db), timeout=2)
+            rows = conn.execute(
+                "SELECT id, subject, predicate, status, created_at, resolved_at, "
+                "resolution_fact_id, resolution_reason, severity, score_confidence "
+                "FROM conflicts ORDER BY created_at ASC LIMIT 2000"
+            ).fetchall()
+            conn.close()
+            for row in rows:
+                created_at = int(row[4])
+                resolved_at = int(row[5]) if row[5] is not None else None
+                detected_after_messages = sum(epoch <= created_at for epoch in message_epochs)
+                resolved_after_messages = (
+                    sum(epoch <= resolved_at for epoch in message_epochs)
+                    if resolved_at is not None
+                    else None
+                )
+                conflicts.append({
+                    "id": row[0],
+                    "subject": row[1],
+                    "predicate": row[2],
+                    "status": row[3],
+                    "created_at": datetime.fromtimestamp(created_at, timezone.utc).isoformat(),
+                    "resolved_at": (
+                        datetime.fromtimestamp(resolved_at, timezone.utc).isoformat()
+                        if resolved_at is not None
+                        else None
+                    ),
+                    "resolution_fact_id": row[6],
+                    "resolution_reason": row[7],
+                    "severity": row[8],
+                    "score_confidence": row[9],
+                    "detected_after_messages": detected_after_messages,
+                    "resolved_after_messages": resolved_after_messages,
+                })
+        except (sqlite3.Error, OSError):
+            pass
+
+    resolved = sum(c["status"] == "resolved" for c in conflicts)
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "messages": messages,
+        "conflicts": conflicts,
+        "workflow_events": workflow_events,
+        "summary": {
+            "messages": len(messages),
+            "detected": len(conflicts),
+            "resolved": resolved,
+            "open": len(conflicts) - resolved,
+            "resolution_rate": round((resolved / len(conflicts) * 100), 1) if conflicts else 0,
+        },
+    }
 
 
 def _fetch(url: str) -> dict:
@@ -144,11 +243,15 @@ class Handler(BaseHTTPRequestHandler):
                 self._html(404, "<h1>Architecture</h1><p>architecture.html not found</p>")
             return
 
-        if self.path == "/assets/knowledge-mesh-architecture.png":
-            if ARCHITECTURE_IMAGE_PATH.exists():
-                self._bytes(200, ARCHITECTURE_IMAGE_PATH.read_bytes(), "image/png")
+        if self.path in {"/analytics", "/analytics.html"}:
+            if ANALYTICS_PATH.exists():
+                self._html(200, ANALYTICS_PATH.read_text())
             else:
-                self._json(404, {"error": "architecture image not found"})
+                self._html(404, "<h1>Analytics</h1><p>analytics.html not found</p>")
+            return
+
+        if self.path == "/api/analytics":
+            self._json(200, _get_analytics_data())
             return
 
         if self.path.startswith("/events"):

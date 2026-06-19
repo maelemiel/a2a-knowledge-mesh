@@ -42,6 +42,7 @@ Open:
 ```text
 http://localhost:8776
 http://localhost:8776/architecture
+http://localhost:8776/analytics
 ```
 
 If ports are already in use:
@@ -100,8 +101,11 @@ The dashboard shows:
 - fact/conflict/resolution counters from SQLite
 - registered agents from `registry.db`
 - reset button for local demo databases
+- analytics for detected and resolved conflicts over time and by Band message volume
 
 The architecture page presents the complete source-to-resolution flow as a graphical system view and reuses the live mesh counters.
+
+The graphs page reads persistent Band messages and Reconciler decisions to show when conflicts were detected, when they were resolved, and how many messages had been exchanged at each step.
 
 The live timeline is intentionally backed by both Band WebSocket events and local DB polling, so facts, conflicts, and resolutions still appear even if a Band event is missed.
 
